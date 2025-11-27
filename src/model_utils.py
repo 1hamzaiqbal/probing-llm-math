@@ -21,10 +21,15 @@ def generate_answer(model, tokenizer, question, device="cuda"):
     Enforces a 'direct answer' style via system prompt and generation config.
     """
     
-    # System prompt to enforce direct answers
+    # Qwen-Math specific prompt format
+    # It often responds better to "Please reason step by step, and put your final answer within \\boxed{}."
+    # But since we want NO thinking, we try to force it.
+    # However, Qwen-Math is heavily tuned for CoT. The best way to extract answer is to let it output \boxed{}.
+    
     system_prompt = (
-        "You are a math solver. For each problem, compute the answer internally and "
-        "output only the final numeric or algebraic answer on a single line, with no explanation."
+        "You are a math solver. "
+        "Please provide the final answer directly. "
+        "Put your final answer within \\boxed{}."
     )
     
     messages = [
@@ -40,20 +45,13 @@ def generate_answer(model, tokenizer, question, device="cuda"):
     
     model_inputs = tokenizer([text_input], return_tensors="pt").to(device)
     
-    # Generate with hidden states
-    # Note: 'output_hidden_states' in generate() usually returns hidden states for generated tokens.
-    # If we want hidden states for the prompt + generation, we might need a separate forward pass 
-    # or inspect the return object carefully. 
-    # For now, let's get the generated text first, then we can do a forward pass if needed for specific analysis,
-    # OR we can use return_dict_in_generate=True and output_hidden_states=True.
-    
     with torch.no_grad():
         generated_ids = model.generate(
             **model_inputs,
-            max_new_tokens=128,
-            temperature=0.0,      # Greedy decoding for determinism and "no thinking"
+            max_new_tokens=512,   # Allow some tokens in case it chatters, but we'll extract boxed
+            do_sample=False,      # Greedy decoding
+            # temperature=0.0,    # Invalid with do_sample=False
             top_p=1.0,
-            do_sample=False,
             return_dict_in_generate=True,
             output_hidden_states=True
         )
