@@ -1,125 +1,38 @@
-import re
-from sympy import simplify, sympify
-from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+from math_verify import parse, verify, LatexExtractionConfig, ExprExtractionConfig
 
 def extract_answer(text):
     """
-    Extracts the final answer from the model output.
-    """
-    text = text.strip()
+    Extracts the answer using math-verify's parser.
+    We try to parse it into a format that math-verify can use for comparison.
+    However, math-verify's verify() function takes the raw model output and the gold answer.
+    So we might not need to explicitly 'extract' a string for the user unless we want to show it.
     
-    # 1. Look for \boxed{...}
-    simple_boxed = re.findall(r'\\boxed\{([^{}]+)\}', text)
-    if simple_boxed:
-        return simple_boxed[-1].strip()
-        
-    if "\\boxed{" in text:
-        start_idx = text.rfind("\\boxed{") + 7
-        balance = 1
-        end_idx = start_idx
-        while end_idx < len(text) and balance > 0:
-            if text[end_idx] == '{':
-                balance += 1
-            elif text[end_idx] == '}':
-                balance -= 1
-            end_idx += 1
-        
-        if balance == 0:
-            return text[start_idx:end_idx-1].strip()
-
-    # 3. GSM8K style "####"
-    if "####" in text:
-        return text.split("####")[-1].strip()
-        
-    # 4. Fallback
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
-    if not lines:
-        return ""
-    return lines[-1]
-
-def check_truncation(text, is_truncated_flag=False):
+    For display purposes, we can try to find the boxed content.
     """
-    Checks if the text appears truncated.
-    Args:
-        text (str): The generated text.
-        is_truncated_flag (bool): The flag returned by the generation function.
-    Returns:
-        bool: True if truncated.
-    """
-    if is_truncated_flag:
-        return True
-        
-    # Heuristic check: Does it end with punctuation or a closing brace?
-    # This is less reliable than the flag, but useful if flag isn't available.
-    text = text.strip()
-    if not text:
-        return True
-        
-    # Common endings for math proofs
-    if text.endswith(".") or text.endswith("}") or text.endswith("]") or text.endswith(")"):
-        return False
-        
-    # If it ends with a number or variable, it might be okay, but usually there's a period.
-    # Let's rely mostly on the flag.
-    return False
-
-def normalize_latex(text):
-    """
-    Simple text normalization to convert LaTeX math to SymPy-friendly format.
-    """
-    # Remove \left and \right
-    text = text.replace(r'\left', '').replace(r'\right', '')
-    
-    # Replace \frac{a}{b} with (a)/(b)
-    # Note: This handles simple non-nested fractions.
-    text = re.sub(r'\\frac\{([^{}]+)\}\{([^{}]+)\}', r'(\1)/(\2)', text)
-    
-    # Replace \sqrt{x} with sqrt(x)
-    text = re.sub(r'\\sqrt\{([^{}]+)\}', r'sqrt(\1)', text)
-    
-    # Replace \cdot and \times with *
-    text = text.replace(r'\cdot', '*').replace(r'\times', '*')
-    
-    return text
+    # math-verify parses into a list of candidates.
+    # We can use LatexExtractionConfig to find \boxed{} content.
+    candidates = parse(text, extraction_config=[LatexExtractionConfig(), ExprExtractionConfig()])
+    if candidates:
+        return str(candidates[-1]) # Return the last candidate as the "extracted" answer
+    return text.strip()
 
 def is_equivalent(model_ans, ground_truth):
     """
-    Checks if model_ans is mathematically equivalent to ground_truth.
+    Checks if model_ans is equivalent to ground_truth using math-verify.
+    Args:
+        model_ans (str): The raw model output (or extracted text).
+        ground_truth (str): The gold answer.
     """
-    # 1. Exact string match (normalized)
-    if model_ans.strip() == ground_truth.strip():
-        return True
+    # verify() takes (gold, target) where target is the model output.
+    # Wait, let's check the signature. usually verify(gold, prediction).
+    # Based on docs: verify(gold, prediction) -> bool
     
-    # Normalize LaTeX for further checks
-    model_ans_norm = normalize_latex(model_ans)
-    ground_truth_norm = normalize_latex(ground_truth)
-        
-    # 2. Numeric comparison
+    # We need to be careful: math-verify expects the gold answer to be parsed?
+    # Or it handles raw strings?
+    # Usually it handles raw strings for both.
+    
     try:
-        # Try to eval simple arithmetic strings like "5/6"
-        # eval() is unsafe generally, but here we are in a controlled env. 
-        # Better to use sympify which handles "5/6" -> Rational(5, 6)
-        num_model = float(sympify(model_ans_norm))
-        num_gt = float(sympify(ground_truth_norm))
-        if abs(num_model - num_gt) < 1e-6:
-            return True
-    except Exception:
-        pass
-        
-    # 3. SymPy equivalence
-    try:
-        # Setup transformations for implicit multiplication (e.g. "2x" -> "2*x")
-        transformations = (standard_transformations + (implicit_multiplication_application,))
-        
-        # Parse expressions
-        expr_model = parse_expr(model_ans_norm, transformations=transformations)
-        expr_gt = parse_expr(ground_truth_norm, transformations=transformations)
-        
-        # Check if difference simplifies to 0
-        diff = simplify(expr_model - expr_gt)
-        if diff == 0:
-            return True
-    except Exception:
-        pass
-        
-    return False
+        return verify(ground_truth, model_ans)
+    except Exception as e:
+        print(f"Error in math-verify: {e}")
+        return False

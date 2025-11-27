@@ -3,3 +3,4 @@ torch
 accelerate
 sympy
 bitsandbytes
+math-verify
