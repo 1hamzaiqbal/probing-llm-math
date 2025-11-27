@@ -5,9 +5,9 @@ This repository contains a pipeline to evaluate `Qwen/Qwen2.5-Math-7B-Instruct` 
 ## Setup
 
 1.  **Google Colab**:
-    *   Upload the `src` folder and `pipeline_colab.ipynb` to your Colab environment.
-    *   Open `pipeline_colab.ipynb`.
-    *   Run the cells. The first cell installs necessary dependencies.
+    *   Open `pipeline_colab.ipynb` in this repo.
+    *   Click the "Open in Colab" button (if you have the extension) or upload it to Colab.
+    *   **Run the first cell**: It will automatically clone this repository (branch `colab-pipeline-setup`) and install dependencies.
 
 2.  **Local (with GPU)**:
     *   Install dependencies: `pip install -r requirements.txt`
