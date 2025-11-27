@@ -37,6 +37,25 @@ def extract_answer(text):
         return ""
     return lines[-1]
 
+def normalize_latex(text):
+    """
+    Simple text normalization to convert LaTeX math to SymPy-friendly format.
+    """
+    # Remove \left and \right
+    text = text.replace(r'\left', '').replace(r'\right', '')
+    
+    # Replace \frac{a}{b} with (a)/(b)
+    # Note: This handles simple non-nested fractions.
+    text = re.sub(r'\\frac\{([^{}]+)\}\{([^{}]+)\}', r'(\1)/(\2)', text)
+    
+    # Replace \sqrt{x} with sqrt(x)
+    text = re.sub(r'\\sqrt\{([^{}]+)\}', r'sqrt(\1)', text)
+    
+    # Replace \cdot and \times with *
+    text = text.replace(r'\cdot', '*').replace(r'\times', '*')
+    
+    return text
+
 def is_equivalent(model_ans, ground_truth):
     """
     Checks if model_ans is mathematically equivalent to ground_truth.
@@ -44,14 +63,21 @@ def is_equivalent(model_ans, ground_truth):
     # 1. Exact string match (normalized)
     if model_ans.strip() == ground_truth.strip():
         return True
+    
+    # Normalize LaTeX for further checks
+    model_ans_norm = normalize_latex(model_ans)
+    ground_truth_norm = normalize_latex(ground_truth)
         
     # 2. Numeric comparison
     try:
-        num_model = float(model_ans)
-        num_gt = float(ground_truth)
+        # Try to eval simple arithmetic strings like "5/6"
+        # eval() is unsafe generally, but here we are in a controlled env. 
+        # Better to use sympify which handles "5/6" -> Rational(5, 6)
+        num_model = float(sympify(model_ans_norm))
+        num_gt = float(sympify(ground_truth_norm))
         if abs(num_model - num_gt) < 1e-6:
             return True
-    except ValueError:
+    except Exception:
         pass
         
     # 3. SymPy equivalence
@@ -60,8 +86,8 @@ def is_equivalent(model_ans, ground_truth):
         transformations = (standard_transformations + (implicit_multiplication_application,))
         
         # Parse expressions
-        expr_model = parse_expr(model_ans, transformations=transformations)
-        expr_gt = parse_expr(ground_truth, transformations=transformations)
+        expr_model = parse_expr(model_ans_norm, transformations=transformations)
+        expr_gt = parse_expr(ground_truth_norm, transformations=transformations)
         
         # Check if difference simplifies to 0
         diff = simplify(expr_model - expr_gt)
