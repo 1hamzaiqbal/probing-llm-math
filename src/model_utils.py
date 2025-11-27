@@ -48,7 +48,7 @@ def generate_answer(model, tokenizer, question, device="cuda"):
     with torch.no_grad():
         generated_ids = model.generate(
             **model_inputs,
-            max_new_tokens=512,   # Allow some tokens in case it chatters, but we'll extract boxed
+            max_new_tokens=2048,  # Increased to allow full CoT for hard problems
             do_sample=False,      # Greedy decoding
             # temperature=0.0,    # Invalid with do_sample=False
             top_p=1.0,
