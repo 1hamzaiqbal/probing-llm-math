@@ -1,31 +1,35 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-def load_model(model_name="Qwen/Qwen2.5-Math-7B-Instruct", device="cuda"):
+def load_model(model_name="Qwen/Qwen2.5-Math-7B-Instruct", device="cuda", load_in_4bit=True):
     """
     Loads the model and tokenizer.
+    Args:
+        load_in_4bit (bool): If True, load in 4-bit quantization (recommended for T4 GPU).
     """
-    print(f"Loading model: {model_name}...")
+    print(f"Loading model: {model_name} (4-bit: {load_in_4bit})...")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        device_map=device,
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True
-    )
+    
+    model_kwargs = {
+        "device_map": device,
+        "trust_remote_code": True,
+    }
+    
+    if load_in_4bit:
+        model_kwargs["load_in_4bit"] = True
+        model_kwargs["bnb_4bit_compute_dtype"] = torch.bfloat16
+    else:
+        model_kwargs["torch_dtype"] = torch.bfloat16
+        
+    model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
     return model, tokenizer
 
 def generate_answer(model, tokenizer, question, device="cuda"):
     """
-    Generates an answer for a math question and returns the text and hidden states.
-    Enforces a 'direct answer' style via system prompt and generation config.
+    Generates an answer for a math question and returns the text, hidden states, and truncation status.
     """
     
     # Qwen-Math specific prompt format
-    # It often responds better to "Please reason step by step, and put your final answer within \\boxed{}."
-    # But since we want NO thinking, we try to force it.
-    # However, Qwen-Math is heavily tuned for CoT. The best way to extract answer is to let it output \boxed{}.
-    
     system_prompt = (
         "You are a math solver. "
         "Please provide the final answer directly. "
@@ -45,30 +49,28 @@ def generate_answer(model, tokenizer, question, device="cuda"):
     
     model_inputs = tokenizer([text_input], return_tensors="pt").to(device)
     
+    max_new_tokens = 4096
+    
     with torch.no_grad():
         generated_ids = model.generate(
             **model_inputs,
-            max_new_tokens=2048,  # Increased to allow full CoT for hard problems
+            max_new_tokens=max_new_tokens,
             do_sample=False,      # Greedy decoding
-            # temperature=0.0,    # Invalid with do_sample=False
             top_p=1.0,
             return_dict_in_generate=True,
             output_hidden_states=True
         )
     
     # Extract text
-    # The generated_ids.sequences contains prompt + new tokens
-    # We only want the new tokens for the answer text
     new_tokens = generated_ids.sequences[0][len(model_inputs.input_ids[0]):]
     answer_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
     
-    # Hidden states: generated_ids.hidden_states is a tuple (one per generated token)
-    # Each element is a tuple of (one per layer) tensors.
-    # We might want the last token's hidden state from the last layer, or all of them.
-    # For now, let's return the full object or a simplified version.
-    # Let's return the raw hidden_states tuple for the caller to process.
+    # Check for truncation
+    # If the number of new tokens equals max_new_tokens, it's likely truncated.
+    # Note: It could theoretically finish exactly at the limit, but rare.
+    is_truncated = len(new_tokens) == max_new_tokens
     
-    return answer_text, generated_ids.hidden_states
+    return answer_text, generated_ids.hidden_states, is_truncated
 
 def get_hidden_states_for_text(model, tokenizer, text, device="cuda"):
     """
