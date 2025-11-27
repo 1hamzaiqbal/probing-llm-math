@@ -36,3 +36,29 @@ def is_equivalent(model_ans, ground_truth):
     except Exception as e:
         print(f"Error in math-verify: {e}")
         return False
+
+def check_truncation(text, is_truncated_flag=False):
+    """
+    Checks if the text appears truncated.
+    Args:
+        text (str): The generated text.
+        is_truncated_flag (bool): The flag returned by the generation function.
+    Returns:
+        bool: True if truncated.
+    """
+    if is_truncated_flag:
+        return True
+        
+    # Heuristic check: Does it end with punctuation or a closing brace?
+    # This is less reliable than the flag, but useful if flag isn't available.
+    text = text.strip()
+    if not text:
+        return True
+        
+    # Common endings for math proofs
+    if text.endswith(".") or text.endswith("}") or text.endswith("]") or text.endswith(")"):
+        return False
+        
+    # If it ends with a number or variable, it might be okay, but usually there's a period.
+    # Let's rely mostly on the flag.
+    return False
