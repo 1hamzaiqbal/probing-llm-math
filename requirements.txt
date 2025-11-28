@@ -4,3 +4,6 @@ accelerate
 sympy
 bitsandbytes
 math-verify
+scikit-learn
+matplotlib
+datasets
