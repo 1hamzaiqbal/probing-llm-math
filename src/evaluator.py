@@ -32,7 +32,18 @@ def is_equivalent(model_ans, ground_truth):
     # Usually it handles raw strings for both.
     
     try:
-        return verify(ground_truth, model_ans)
+        if verify(ground_truth, model_ans):
+            return True
+            
+        # Fallback: Try removing spaces. 
+        # math-verify sometimes struggles with spacing differences in LaTeX.
+        # e.g. "1+\sqrt{2}" vs "1 + \sqrt{2}"
+        gt_no_space = ground_truth.replace(" ", "")
+        ans_no_space = model_ans.replace(" ", "")
+        if verify(gt_no_space, ans_no_space):
+            return True
+            
+        return False
     except Exception as e:
         print(f"Error in math-verify: {e}")
         return False
