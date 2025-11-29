@@ -89,7 +89,8 @@ def collect_data(num_samples=200, output_file="probe_data.pt", audit_file="probe
             ground_truth = item['answer'].split("####")[-1].strip()
         else: # MATH
             question = item['problem']
-            ground_truth = item['solution'] # MATH solution often has boxed answer, evaluator handles it
+            # Extract boxed answer from solution for cleaner comparison
+            ground_truth = evaluator.extract_answer(item['solution'])
             
         # Generate
         pred_text, _, is_truncated = model_utils.generate_answer(model, tokenizer, question)
