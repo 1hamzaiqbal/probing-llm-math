@@ -240,6 +240,134 @@ def compare_matrix_elements(mat1, mat2):
     return True
 
 
+def extract_tuple_elements(s):
+    """
+    Extract elements from a coordinate/tuple like (1, 2) or (1, \frac{9}{2}).
+    Returns a list of element strings, or None if not a tuple.
+    """
+    s = s.strip()
+    
+    # Must start with ( and end with )
+    if not (s.startswith('(') and s.endswith(')')):
+        return None
+    
+    # Check it's not a matrix
+    if 'matrix' in s.lower():
+        return None
+    
+    content = s[1:-1].strip()
+    
+    # Split by comma, but be careful with nested structures
+    elements = []
+    depth = 0
+    current = ""
+    
+    for char in content:
+        if char in '({[':
+            depth += 1
+            current += char
+        elif char in ')}]':
+            depth -= 1
+            current += char
+        elif char == ',' and depth == 0:
+            elements.append(current.strip())
+            current = ""
+        else:
+            current += char
+    
+    if current.strip():
+        elements.append(current.strip())
+    
+    # Should have at least 2 elements for a valid tuple
+    if len(elements) >= 2:
+        return elements
+    
+    return None
+
+
+def compare_tuple_elements(tup1, tup2):
+    """
+    Compare two tuples element-wise using symbolic comparison.
+    """
+    if tup1 is None or tup2 is None:
+        return False
+    
+    if len(tup1) != len(tup2):
+        return False
+    
+    for elem1, elem2 in zip(tup1, tup2):
+        if not sympy_equivalent(elem1, elem2):
+            return False
+    
+    return True
+
+
+def normalize_number_string(s):
+    """
+    Normalize a number string by removing thousands separators.
+    E.g., "90,900,909" -> "90900909"
+    """
+    s = s.strip()
+    # Remove commas used as thousands separators
+    # But be careful: (1, 2) has commas that aren't thousands separators
+    # Only remove if it looks like a plain number with commas
+    if re.match(r'^-?[\d,]+\.?\d*$', s):
+        return s.replace(',', '')
+    return s
+
+
+def extract_set_elements(s):
+    r"""
+    Extract elements from a set like {1, 2, 3} or \{1, 2, 3\}.
+    Returns a sorted list of element strings, or None if not a set.
+    """
+    s = s.strip()
+    
+    # Handle LaTeX set notation
+    s = s.replace('\\{', '{').replace('\\}', '}')
+    
+    # Must start with { and end with }
+    if not (s.startswith('{') and s.endswith('}')):
+        return None
+    
+    content = s[1:-1].strip()
+    
+    # Split by comma
+    elements = [elem.strip() for elem in content.split(',')]
+    
+    if len(elements) >= 1:
+        return sorted(elements)
+    
+    return None
+
+
+def compare_sets(set1, set2):
+    """
+    Compare two sets element-wise (order doesn't matter).
+    """
+    if set1 is None or set2 is None:
+        return False
+    
+    if len(set1) != len(set2):
+        return False
+    
+    # For sets, we need to find a matching for each element
+    # Try to match each element from set1 to set2
+    used = [False] * len(set2)
+    
+    for elem1 in set1:
+        found = False
+        for j, elem2 in enumerate(set2):
+            if not used[j] and sympy_equivalent(elem1, elem2):
+                used[j] = True
+                found = True
+                break
+        if not found:
+            return False
+    
+    return True
+
+
 def sympy_equivalent(expr1_str, expr2_str):
     """
     Check if two expressions are symbolically equivalent using SymPy.
@@ -306,15 +434,44 @@ def is_equivalent(model_ans, ground_truth):
     # Remove all whitespace for comparison
     if norm_ans.replace(' ', '') == norm_gt.replace(' ', ''):
         return True
+    
+    # 2. Normalize numbers with thousands separators (e.g., "90,900,909" -> "90900909")
+    norm_ans_num = normalize_number_string(model_ans)
+    norm_gt_num = normalize_number_string(ground_truth)
+    if norm_ans_num != model_ans or norm_gt_num != ground_truth:
+        # At least one had commas, try comparing normalized versions
+        if norm_ans_num == norm_gt_num:
+            return True
+        try:
+            if float(norm_ans_num) == float(norm_gt_num):
+                return True
+        except (ValueError, TypeError):
+            pass
         
-    # 2. Basic Numeric Equality
+    # 3. Basic Numeric Equality
     try:
         if float(model_ans) == float(ground_truth):
             return True
     except (ValueError, TypeError):
         pass
 
-    # 3. Check if both are matrices and compare element-wise
+    # 4. Check if both are tuples/coordinates and compare element-wise
+    # e.g., (1, \frac{9}{2}) vs (1, 4.5)
+    tup1 = extract_tuple_elements(model_ans)
+    tup2 = extract_tuple_elements(ground_truth)
+    if tup1 is not None and tup2 is not None:
+        if compare_tuple_elements(tup1, tup2):
+            return True
+
+    # 5. Check if both are sets and compare element-wise (order independent)
+    # e.g., {1, 2, 3} vs {3, 1, 2}
+    set1 = extract_set_elements(model_ans)
+    set2 = extract_set_elements(ground_truth)
+    if set1 is not None and set2 is not None:
+        if compare_sets(set1, set2):
+            return True
+
+    # 6. Check if both are matrices and compare element-wise
     if 'matrix' in model_ans.lower() or 'matrix' in ground_truth.lower():
         mat1 = extract_matrix_elements(model_ans)
         mat2 = extract_matrix_elements(ground_truth)
@@ -322,7 +479,7 @@ def is_equivalent(model_ans, ground_truth):
             if compare_matrix_elements(mat1, mat2):
                 return True
 
-    # 4. Math-Verify (if available)
+    # 7. Math-Verify (if available)
     if MATH_VERIFY_AVAILABLE:
         try:
             if verify(ground_truth, model_ans):
@@ -339,20 +496,32 @@ def is_equivalent(model_ans, ground_truth):
         except Exception:
             pass
 
-    # 5. SymPy Symbolic Comparison (handles fractions, radicals, complex numbers)
+    # 8. SymPy Symbolic Comparison (handles fractions, radicals, complex numbers)
     if sympy_equivalent(model_ans, ground_truth):
         return True
     
-    # 6. Special case: Complex numbers with different ordering (i/5 vs (1/5)i)
-    # Normalize complex number representations
+    # 9. Special case: Complex numbers with different ordering (i/5 vs (1/5)i)
     try:
-        # Try to parse and compare as complex expressions
         ans_normalized = model_ans.replace('\\frac{i}', 'i*\\frac{1}')
         gt_normalized = ground_truth.replace('\\frac{i}', 'i*\\frac{1}')
         if sympy_equivalent(ans_normalized, gt_normalized):
             return True
     except Exception:
         pass
+    
+    # 10. Interval notation comparison (e.g., [1, \infty) vs [1, inf))
+    # For now, rely on string matching after normalization
+    # Intervals with infinity are tricky for symbolic comparison
+    if ('\\infty' in model_ans or '\\infty' in ground_truth or 
+        'infty' in model_ans or 'infty' in ground_truth or
+        'inf' in model_ans.lower() or 'inf' in ground_truth.lower()):
+        # Normalize infinity representations
+        ans_inf = model_ans.replace('\\infty', 'oo').replace('infty', 'oo').lower()
+        gt_inf = ground_truth.replace('\\infty', 'oo').replace('infty', 'oo').lower()
+        ans_inf = re.sub(r'\s+', '', ans_inf)
+        gt_inf = re.sub(r'\s+', '', gt_inf)
+        if ans_inf == gt_inf:
+            return True
         
     return False
 

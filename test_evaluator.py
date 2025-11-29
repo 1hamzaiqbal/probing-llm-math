@@ -71,6 +71,41 @@ test_cases = [
     # Edge cases that should fail
     (r"\frac{1}{3}", r"0.33", False, "Fraction vs truncated decimal"),
     (r"2 + 3i", r"3 + 2i", False, "Different complex numbers"),
+    
+    # === NEW TEST CASES ===
+    
+    # Coordinate tuples with mixed fraction/decimal (the Row 0 issue)
+    (r"(1, 4.5)", r"(1,\frac{9}{2})", True, "Tuple: decimal vs fraction"),
+    (r"(1, 4.5)", r"(1, \frac{9}{2})", True, "Tuple: decimal vs fraction with space"),
+    (r"(-3, 2)", r"(-3,2)", True, "Tuple: spacing difference"),
+    (r"(0, 0)", r"(0, 0)", True, "Tuple: origin"),
+    (r"(\frac{1}{2}, \frac{3}{4})", r"(0.5, 0.75)", True, "Tuple: both elements fractions"),
+    
+    # Numbers with thousands separators
+    (r"90900909", r"90,900,909", True, "Thousands separators"),
+    (r"1000000", r"1,000,000", True, "Large number with commas"),
+    (r"123456789", r"123,456,789", True, "Even larger number"),
+    
+    # Set notation
+    (r"\{1, 2, 3\}", r"\{1, 2, 3\}", True, "Set: exact match"),
+    (r"{1, 2, 3}", r"\{1, 2, 3\}", True, "Set: LaTeX vs plain braces"),
+    (r"\{3, 1, 2\}", r"\{1, 2, 3\}", True, "Set: different order (sets are unordered)"),
+    
+    # More interval cases
+    (r"[1, \infty)", r"[1, infty)", True, "Interval: different infinity notation"),
+    (r"(-\infty, 5]", r"(-infty, 5]", True, "Interval: negative infinity"),
+    
+    # Scientific notation (basic)
+    (r"1000", r"10^3", True, "Scientific: power of 10"),
+    
+    # Negative numbers in various formats
+    (r"-\frac{1}{2}", r"-0.5", True, "Negative fraction vs decimal"),
+    (r"(-1, -2)", r"(-1,-2)", True, "Tuple: negative values"),
+    
+    # Verify false negatives don't become false positives
+    (r"(1, 2)", r"(2, 1)", False, "Tuple: order matters"),
+    (r"90900909", r"100899919", False, "Different large numbers"),
+    (r"\{1, 2\}", r"\{1, 2, 3\}", False, "Set: different sizes"),
 ]
 
 
