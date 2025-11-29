@@ -49,7 +49,9 @@ def generate_answer(model, tokenizer, question, device="cuda"):
     
     model_inputs = tokenizer([text_input], return_tensors="pt").to(device)
     
-    max_new_tokens = 4096
+    # Reduced from 4096 to speed up and avoid max length warnings
+    # Most math answers are well under 1024 tokens
+    max_new_tokens = 1536
     
     with torch.no_grad():
         generated_ids = model.generate(

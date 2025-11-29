@@ -63,15 +63,34 @@ def train_probe_per_layer(X_by_layer, y, num_layers, probe_type='classification'
     best_layer = -1
     best_score = -1
     
+    # Check if we have enough samples per class for stratified split
+    unique, counts = np.unique(y, return_counts=True)
+    min_count = counts.min()
+    
+    # Need at least 2 samples per class for stratified split
+    use_stratify = probe_type == 'classification' and min_count >= 2
+    if probe_type == 'classification' and min_count < 2:
+        print(f"  WARNING: Class with only {min_count} sample(s), using non-stratified split")
+    
     for layer_idx in range(num_layers):
         X = X_by_layer(layer_idx)
         
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state, 
-            stratify=y if probe_type == 'classification' else None
-        )
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state, 
+                stratify=y if use_stratify else None
+            )
+        except ValueError as e:
+            # Fallback to non-stratified if stratified fails
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state
+            )
         
-        if probe_type == 'classification':
+        # Check if test set has enough variety
+        if len(np.unique(y_train)) < 2:
+            # Not enough classes in training set
+            score = 0.0
+        elif probe_type == 'classification':
             clf = LogisticRegression(max_iter=2000, solver='lbfgs', class_weight='balanced')
             clf.fit(X_train, y_train)
             y_pred = clf.predict(X_test)
@@ -172,6 +191,12 @@ def train_topic_probe(data, num_layers, output_dir):
     if len(le.classes_) < 2:
         print("ERROR: Need at least 2 topics!")
         return {}
+    
+    # Check minimum samples per class
+    min_samples = min(np.bincount(y))
+    if min_samples < 2:
+        print(f"WARNING: Topic '{le.classes_[np.argmin(np.bincount(y))]}' has only {min_samples} sample(s)")
+        print("         Results may be unreliable. Collect more data for robust probing.")
     
     # Use 0% checkpoint (question-only) for topic probing
     print("\n--- 0pct checkpoint (question-only) ---")
