@@ -1,4 +1,12 @@
-from math_verify import parse, verify, LatexExtractionConfig, ExprExtractionConfig
+try:
+    from math_verify import parse, verify, LatexExtractionConfig, ExprExtractionConfig
+except ImportError:
+    # If math-verify is not available (e.g. local env), we'll rely on fallbacks.
+    # Define dummy functions/classes to prevent NameErrors if used without checking.
+    def parse(*args, **kwargs): return []
+    def verify(*args, **kwargs): return False
+    class LatexExtractionConfig: pass
+    class ExprExtractionConfig: pass
 
 def extract_answer(text):
     """
@@ -23,14 +31,22 @@ def is_equivalent(model_ans, ground_truth):
         model_ans (str): The raw model output (or extracted text).
         ground_truth (str): The gold answer.
     """
-    # verify() takes (gold, target) where target is the model output.
-    # Wait, let's check the signature. usually verify(gold, prediction).
-    # Based on docs: verify(gold, prediction) -> bool
-    
-    # We need to be careful: math-verify expects the gold answer to be parsed?
-    # Or it handles raw strings?
-    # Usually it handles raw strings for both.
-    
+    # 1. Direct String Equality (Normalized)
+    # This handles cases like "-2" == "-2" or "0" == "0" instantly.
+    norm_ans = model_ans.strip().lower()
+    norm_gt = ground_truth.strip().lower()
+    if norm_ans == norm_gt:
+        return True
+        
+    # 2. Basic Numeric Equality
+    # Tries to parse both as floats. Handles "0" == "0.0" or "1" == "1.00"
+    try:
+        if float(norm_ans) == float(norm_gt):
+            return True
+    except ValueError:
+        pass
+
+    # 3. Math-Verify (The Heavy Lifter)
     try:
         if verify(ground_truth, model_ans):
             return True
@@ -43,10 +59,14 @@ def is_equivalent(model_ans, ground_truth):
         if verify(gt_no_space, ans_no_space):
             return True
             
-        return False
     except Exception as e:
-        print(f"Error in math-verify: {e}")
-        return False
+        # If math-verify isn't installed or fails, we rely on the checks above.
+        # In the local environment where math-verify is missing, this print might be noisy,
+        # but in Colab it should be fine.
+        # print(f"Error in math-verify: {e}") 
+        pass
+        
+    return False
 
 def check_truncation(text, is_truncated_flag=False):
     """
