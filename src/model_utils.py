@@ -16,12 +16,16 @@ def load_model(model_name="Qwen/Qwen2.5-Math-7B-Instruct", device="cuda", load_i
         "trust_remote_code": True,
     }
     
-    # Try to use flash attention for speedup (if available)
+    # Check if flash attention is available before trying to use it
     try:
-        model_kwargs["attn_implementation"] = "flash_attention_2"
-        print("  Using Flash Attention 2")
+        import importlib
+        if importlib.util.find_spec("flash_attn") is not None:
+            model_kwargs["attn_implementation"] = "flash_attention_2"
+            print("  Using Flash Attention 2")
+        else:
+            print("  Flash Attention not installed, using default attention")
     except Exception:
-        pass
+        print("  Using default attention")
     
     if load_in_4bit:
         # Use proper BitsAndBytesConfig (avoids deprecation warning)
