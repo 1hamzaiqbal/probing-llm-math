@@ -83,6 +83,8 @@ def normalize_latex(s):
     s = s.replace('\\left{', '{').replace('\\right}', '}')
     s = s.replace('\\cdot', '*')
     s = s.replace('\\times', '*')
+    # Normalize base notation: 4210_{5} -> 4210_5, 4210_{7} -> 4210_7
+    s = re.sub(r'_\{(\d+)\}', r'_\1', s)
     return s.strip()
 
 

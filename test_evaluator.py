@@ -106,6 +106,11 @@ test_cases = [
     (r"(1, 2)", r"(2, 1)", False, "Tuple: order matters"),
     (r"90900909", r"100899919", False, "Different large numbers"),
     (r"\{1, 2\}", r"\{1, 2, 3\}", False, "Set: different sizes"),
+    
+    # Base notation (subscript formatting)
+    (r"4210_{5}", r"4210_5", True, "Base notation: braces vs no braces"),
+    (r"4210_{7}", r"4210_7", True, "Base notation: braces vs no braces"),
+    (r"101_{2}", r"101_2", True, "Binary base notation"),
 ]
 
 
