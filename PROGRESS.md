@@ -1,147 +1,255 @@
-# Probing LLM Math - Progress Report
+# Probing LLM Math - Final Results
 
 **Last Updated**: December 1, 2025  
-**Branch**: `colab-pipeline-setup`
+**Branch**: `colab-pipeline-setup`  
+**Status**: ✅ Complete
 
 ---
 
-## Project Status: Safe Checkpoint ✅
+## Executive Summary
 
-This document captures the current state of the project with all completed work. Results placeholders can be filled in from the latest runs.
+We trained linear probes on `Qwen2.5-Math-1.5B-Instruct` to decode internal signals about math problem success, topic, and difficulty. Key findings:
 
----
-
-## Completed Components
-
-### 1. Data Collection Pipeline ✅
-- `src/collect_probe_data.py`
-- Collects balanced correct/incorrect samples
-- Captures activations at 3 checkpoints: 0%, 50%, 100%
-- **Two pooling methods**: Last token AND mean pooling
-- Stores: topic, difficulty level, correctness labels
-- Generates audit CSV for manual inspection
-- Reproducible with `--seed` flag
-
-### 2. Answer Evaluator ✅
-- `src/evaluator.py` - 97 test cases
-- Multi-strategy comparison:
-  - String normalization (LaTeX cleanup)
-  - Numeric equality
-  - SymPy symbolic equivalence
-  - Tuple/set/matrix element-wise
-- Fixed 13 false negatives from 500-sample audit:
-  - Shorthand fractions: `\frac12` → `\frac{1}{2}`
-  - Variable prefixes: `x = 3` → `3`
-  - Algebraic equivalence: `-3(x+2)(x-1)` = `-3x²-3x+6`
-  - Outer parentheses: `(4x-7)` = `4x-7`
-
-### 3. Probe Training ✅
-- `src/train_probe.py`
-- **Linear Probes**: Logistic Regression for classification, Ridge for regression
-- **Difference-of-Means Probes**: Simple, interpretable baseline
-- **MLP Probes**: 2-layer non-linear comparison (new!)
-- Visualizations: 2D heatmap, PCA, pooling comparison
-- Control task (shuffled labels) for validation
-
-### 4. Stratified Evaluation ✅
-- `src/stratified_eval.py`
-- Generates accuracy heatmap by topic × difficulty
-- Identifies "performance cliffs"
-
-### 5. Documentation ✅
-- `METHODOLOGY.md` - Full methodology writeup
-- `RESULTS_TEMPLATE.md` - Template for final results
-- `PROGRESS.md` - This file
+1. **Success Prediction**: 73-81% accuracy - model "knows" it will fail before answering
+2. **Token Length Matters**: Incorrect answers are 60% longer (731 vs 458 tokens)
+3. **Topic Classification**: 86% accuracy (expected - distinct vocabulary)
+4. **Difficulty Estimation**: 46% (weak signal)
+5. **Model Accuracy**: 72.5% overall on stratified MATH dataset
 
 ---
 
-## Latest Run: 500 Samples (1.5B Model)
+## Dataset & Model
 
-### Configuration
 | Setting | Value |
 |---------|-------|
-| Model | `Qwen/Qwen2.5-Math-1.5B-Instruct` |
-| Samples | 500 (250 correct, 250 incorrect) |
-| Pooling | Both (last_token + mean) |
-| Checkpoints | 0%, 50%, 100% |
+| Model | `Qwen/Qwen2.5-Math-1.5B-Instruct` (4-bit) |
+| Probe Samples | 500 (261 correct, 239 incorrect) |
+| Eval Samples | 400 (20 per topic×level cell) |
 | Layers | 29 |
 | Hidden Dim | 1536 |
 
-### Key Results
+### Topic Distribution (Probe Data)
+| Topic | Count |
+|-------|-------|
+| Algebra | 310 |
+| Precalculus | 72 |
+| Number Theory | 68 |
+| Counting & Probability | 50 |
 
-#### Success Probes (Main Finding!)
+### Level Distribution
+| Level | Count |
+|-------|-------|
+| Level 1 | 45 |
+| Level 2 | 76 |
+| Level 3 | 98 |
+| Level 4 | 105 |
+| Level 5 | 176 |
 
-| Checkpoint | Linear Best | Layer | DiffMeans Best | Layer |
+---
+
+## 1. Success Probes (Main Finding!)
+
+### Results by Checkpoint
+
+| Checkpoint | LogReg Best | Layer | DiffMeans Best | Layer |
 |------------|-------------|-------|----------------|-------|
-| 0% | ~69-80% | L1/L15 | ~75-79% | L15/L18 |
-| 50% | ~70-71% | L8/L14 | ~60-70% | L1/L20 |
-| 100% | ~77-80% | L4/L18/L23 | ~67-70% | L2/L28 |
+| **0%** | 73.0% | L17 | 72.0% | L16 |
+| **50%** | 73.0% | L25 | 69.0% | L28 |
+| **100%** | **81.0%** | L18 | 72.0% | L2 |
 
-**Key Finding**: Model predicts failure at 0% (before answering) with **75-80%** accuracy!
+### 2D Heatmap (Layer × Checkpoint)
+- **Best LogReg**: Layer 22, 100% = **80.0%**
+- **Best DiffMeans**: Layer 16, 0% = **78.0%**
 
-#### Pooling Comparison
+### Interpretation
+The model has **"metacognition"** - it encodes success/failure signal before generating any answer (73% at 0%). This signal strengthens as generation progresses, reaching 81% at 100%.
 
-| Checkpoint | Last Token | Mean Pool | Δ |
-|------------|------------|-----------|---|
-| 0% | ~69% | ~72% | +3% |
-| 50% | ~71% | ~76% | +5% |
-| 100% | ~77% | ~79% | +2% |
-
-**Finding**: Mean pooling consistently outperforms last token.
-
-#### Other Probes
-
-| Probe | Best Score | Interpretation |
-|-------|------------|----------------|
-| Topic | ~82-86% | Expected (distinct vocabulary) |
-| Difficulty (class) | ~45-46% | Weak (chance=20%) |
-| Difficulty (regress) | R²~0.05-0.21 | Very weak |
-| Control (shuffled) | ~41-52% | ✅ Passed |
+### Control Task
+- Mean accuracy: **50.3%** (expected ~50%)
+- ✅ **Passed** - confirms probes learn real patterns, not memorizing
 
 ---
 
-## Model Failure Analysis (from 500-sample audit)
+## 2. Token Length Analysis (New Finding!)
 
-### Failure Distribution by Topic
-- Algebra: 135 failures (54%)
-- Precalculus: 49 failures (20%)
-- Number Theory: 34 failures (14%)
-- Counting & Probability: 32 failures (13%)
+### Key Stats
+| Metric | Correct | Incorrect |
+|--------|---------|-----------|
+| Mean tokens | **458** | **731** |
+| Median tokens | 400 | 777 |
 
-### Failure Distribution by Level
-- Level 5: 132 failures (53%)
-- Level 4: 48 failures (19%)
-- Level 3: 40 failures (16%)
-- Level 2: 26 failures (10%)
-- Level 1: 4 failures (2%)
+### Statistical Test
+- **t-statistic**: -12.40
+- **p-value**: < 0.0001
+- **Correlation** (tokens vs correct): **-0.486**
 
-### Common Failure Modes
-1. **Algebraic Errors**: Correct approach but calculation mistakes
-2. **"Lazy" Guessing**: Outputs 0, 1, or -1 for complex problems (~5%)
-3. **Extraction Failures**: Verbose output with buried answer
-4. **Symbolic vs Numeric**: Wrong format (decimal when exact needed)
+### Accuracy by Token Range
+| Token Range | Accuracy | n |
+|-------------|----------|---|
+| 317-403 (optimal) | **79.5%** | 73 |
+| ≤253 (short) | 76.0% | 50 |
+| ≥1024 (long) | **2.4%** | 83 |
+
+**Insight**: Long responses strongly predict failure. Model "rambles" when uncertain.
 
 ---
 
-## File Structure
+## 3. Pooling Method Comparison
 
+| Checkpoint | Last Token | Mean Pool | Winner |
+|------------|------------|-----------|--------|
+| 0% | **73.0%** | 70.0% | Last Token |
+| 50% | 73.0% | **78.0%** | Mean Pool |
+| 100% | **81.0%** | 78.0% | Last Token |
+
+**Mixed results**: Mean pooling wins at 50% (+5%), but last token wins at 0% and 100%.
+
+---
+
+## 4. Confidence Calibration
+
+### Expected Calibration Error (ECE)
+| Checkpoint | ECE | Interpretation |
+|------------|-----|----------------|
+| 0% | 0.228 | Moderate calibration |
+| 50% | 0.290 | Worse calibration |
+| 100% | **0.174** | Best calibration |
+
+### Layer-wise Calibration
+- **Best calibrated**: Layer 0 (ECE = 0.056)
+- **Most accurate**: Layer 18 (Acc = 81.0%)
+
+### Prediction Trajectories
+| Category | % of Samples |
+|----------|--------------|
+| Stable Correct | 48.6% |
+| Stable Incorrect | 44.2% |
+| Recovery (wrong→right) | 1.2% |
+| Degradation (right→wrong) | 1.4% |
+| False Recovery | 0.6% |
+| False Degradation | 1.0% |
+
+**93% of predictions are stable** - probe rarely changes its mind during generation.
+
+### Confidence Change as Predictor
+- Correlation (Δconf vs correct): **0.087** (weak)
+- Predict from Δconf: 55.4%
+- Predict from final conf: **95.4%**
+
+**Conclusion**: Final confidence is highly predictive; change in confidence is not.
+
+---
+
+## 5. Topic Probes
+
+| Metric | Value |
+|--------|-------|
+| Best Accuracy | **86.0%** |
+| Best Layer | L14 |
+| Baseline (majority) | ~62% |
+
+### Classification Report (L14)
+| Topic | Precision | Recall | F1 |
+|-------|-----------|--------|-----|
+| Algebra | 0.92 | 0.90 | 0.91 |
+| Counting & Prob | 0.88 | 0.70 | 0.78 |
+| Number Theory | 0.60 | 0.86 | 0.71 |
+| Precalculus | 1.00 | 0.79 | 0.88 |
+
+---
+
+## 6. Difficulty Probes
+
+| Mode | Best Score | Best Layer |
+|------|------------|------------|
+| Classification (5-class) | **46.0%** | L8 |
+| Regression | R² = **0.209** | L16 |
+| Baseline (random) | 20% | - |
+
+**Interpretation**: Model doesn't strongly encode human-assigned difficulty levels.
+
+---
+
+## 7. Stratified Model Accuracy
+
+### Overall
+- **Accuracy**: 290/400 = **72.5%**
+- **Top Cliff**: Precalculus L4→L5 (25% drop)
+
+### By Topic (estimated from 72.5% overall)
+Performance degrades significantly at Level 5 across all topics, with precalculus showing the steepest cliff.
+
+---
+
+## Key Insights
+
+### 1. Success Prediction Works
+- 73% at 0% checkpoint = model "knows" before answering
+- 81% at 100% = strong post-hoc signal
+- Layer 16-18 is the "metacognition" zone
+
+### 2. Token Length is Highly Predictive
+- **Correlation -0.49** with correctness
+- Long responses (>1024 tokens) have only 2.4% accuracy
+- Optimal range: 317-403 tokens (79.5% accuracy)
+- **Practical implication**: Can use response length as a simple failure detector
+
+### 3. Calibration Improves with Generation
+- ECE drops from 0.228 (0%) to 0.174 (100%)
+- Model becomes more calibrated as it sees its own output
+
+### 4. Topic is Easy, Difficulty is Hard
+- Topic: 86% (questions have distinctive vocabulary)
+- Difficulty: 46% (model doesn't perceive difficulty like humans)
+
+### 5. Stable Trajectories
+- 93% of predictions don't change during generation
+- Recovery/degradation is rare
+
+---
+
+## File Outputs
+
+### Probe Results
 ```
-probing-llm-math/
-├── src/
-│   ├── collect_probe_data.py  # Data collection with pooling options
-│   ├── train_probe.py         # Linear + MLP probe training
-│   ├── evaluator.py           # 97-test robust evaluator
-│   ├── model_utils.py         # Model loading (1.5B default)
-│   └── stratified_eval.py     # Accuracy heatmap generation
-├── test_evaluator.py          # Evaluator test suite
-├── METHODOLOGY.md             # Full methodology writeup
-├── RESULTS_TEMPLATE.md        # Template for results
-├── PROGRESS.md                # This file
-└── probe_results/             # Output directory
-    ├── success_probe_*.png
-    ├── pooling_comparison.png
-    ├── mlp_vs_linear.png      # If --mlp used
-    └── summary.json
+probe_results_1.5b_500_fixed/
+├── success_probe_accuracy.png
+├── success_probe_heatmap_2d.png
+├── control_task_shuffled.png
+├── topic_probe_accuracy.png
+├── difficulty_probe_classification.png
+├── difficulty_probe_regression.png
+├── pooling_comparison.png
+├── pca_layer20_*.png
+└── summary.json
+```
+
+### Token Analysis
+```
+token_analysis/
+├── token_distribution.png
+├── accuracy_by_tokens.png
+├── tokens_by_topic_level.png
+└── token_trend.png
+```
+
+### Confidence Analysis
+```
+confidence_analysis/
+├── calibration_curves.png
+├── confidence_trajectories.png
+├── trajectory_categories.png
+├── confidence_change_prediction.png
+├── layer_calibration.png
+└── summary.json
+```
+
+### Stratified Eval
+```
+eval_results_1.5b/
+├── accuracy_heatmap.png
+├── results.pt
+└── summary.txt
 ```
 
 ---
@@ -149,46 +257,18 @@ probing-llm-math/
 ## Commands Reference
 
 ```bash
-# Collect data (Colab) - ~7 hours for 500 balanced samples
-!python probing-llm-math/src/collect_probe_data.py \
-    --num_samples 500 \
-    --dataset math \
-    --balance \
-    --pooling both \
-    --seed 42 \
-    --output_file probe_data.pt
+# Data collection
+python src/collect_probe_data.py --num_samples 500 --balance --pooling both
 
-# Train probes with MLP comparison
-!python probing-llm-math/src/train_probe.py \
-    --data_file probe_data.pt \
-    --output_dir probe_results \
-    --mlp
+# Probe training
+python src/train_probe.py --data_file probe_data.pt --output_dir probe_results
 
-# Run stratified evaluation
-!python probing-llm-math/src/stratified_eval.py \
-    --samples_per_cell 20 \
-    --output_dir eval_results
+# Token analysis
+python src/analyze_tokens.py --audit_file probe_audit.csv
+
+# Confidence analysis
+python src/confidence_analysis.py --data_file probe_data.pt --layer 15
+
+# Stratified evaluation
+python src/stratified_eval.py --samples_per_cell 20 --output_dir eval_results
 ```
-
----
-
-## Bonus: Future Work
-
-### Currently Implementing
-1. **MLP Probes** ✅ - Compare linear vs non-linear
-2. **Confidence Calibration** - Does probe confidence correlate with accuracy?
-3. **0% → 100% Progression** - Causal analysis of how prediction changes
-
-### Future Extensions
-1. Compare 1.5B vs 7B model
-2. Cross-dataset generalization (MATH → GSM8K)
-3. Layer-wise analysis (why is L15-18 special?)
-4. Intervention experiments (modify activations, check effect)
-
----
-
-## References
-
-- Hendrycks, D. et al. (2021). Measuring Mathematical Problem Solving With the MATH Dataset.
-- Marks, S. et al. (2023). The Geometry of Truth.
-- Belinkov, Y. (2022). Probing Classifiers: Promises, Shortcomings, and Advances.
