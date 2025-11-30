@@ -637,11 +637,131 @@ def generate_pca_visualization(data, num_layers, output_dir, color_by='correctne
 
 
 # =============================================================================
+# MEAN POOLING vs LAST TOKEN COMPARISON
+# =============================================================================
+
+def compare_pooling_methods(data, num_layers, output_dir, checkpoints=['0pct', '100pct']):
+    """
+    Compare mean pooling vs last token for success prediction.
+    
+    This helps determine which pooling method captures more useful signal.
+    """
+    print("\n" + "="*60)
+    print("COMPARING POOLING METHODS (Mean vs Last Token)")
+    print("="*60)
+    
+    # Check if mean pooling data is available
+    if 'activations_0pct_mean' not in data[0]:
+        print("Mean pooling data not available. Skipping comparison.")
+        return None
+    
+    y = np.array([1 if d['is_correct'] else 0 for d in data])
+    
+    results = {
+        'last_token': {},
+        'mean_pool': {}
+    }
+    
+    # Filter to available checkpoints
+    available_last = [cp for cp in checkpoints if f'activations_{cp}' in data[0]]
+    available_mean = [cp for cp in checkpoints if f'activations_{cp}_mean' in data[0]]
+    
+    for checkpoint in available_last:
+        if checkpoint not in available_mean:
+            continue
+            
+        print(f"\n--- {checkpoint} checkpoint ---")
+        
+        # Last token
+        key_last = f'activations_{checkpoint}'
+        def get_X_last(layer_idx):
+            return np.array([d[key_last][layer_idx].numpy() for d in data])
+        
+        res_last, best_layer_last, best_score_last, diff_last = train_probe_per_layer(
+            get_X_last, y, num_layers, probe_type='classification', include_diff_of_means=True
+        )
+        
+        # Mean pool
+        key_mean = f'activations_{checkpoint}_mean'
+        def get_X_mean(layer_idx):
+            return np.array([d[key_mean][layer_idx].numpy() for d in data])
+        
+        res_mean, best_layer_mean, best_score_mean, diff_mean = train_probe_per_layer(
+            get_X_mean, y, num_layers, probe_type='classification', include_diff_of_means=True
+        )
+        
+        results['last_token'][checkpoint] = {
+            'results': res_last, 'best_layer': best_layer_last, 'best_score': best_score_last,
+            'diff_results': diff_last
+        }
+        results['mean_pool'][checkpoint] = {
+            'results': res_mean, 'best_layer': best_layer_mean, 'best_score': best_score_mean,
+            'diff_results': diff_mean
+        }
+        
+        print(f"\n  Last Token: Best = {best_score_last:.3f} @ Layer {best_layer_last}")
+        print(f"  Mean Pool:  Best = {best_score_mean:.3f} @ Layer {best_layer_mean}")
+        
+        diff = best_score_mean - best_score_last
+        if diff > 0.02:
+            print(f"  → Mean pooling is better (+{diff:.3f})")
+        elif diff < -0.02:
+            print(f"  → Last token is better (+{-diff:.3f})")
+        else:
+            print(f"  → Similar performance (Δ={diff:.3f})")
+    
+    # Plot comparison
+    fig, axes = plt.subplots(1, len(available_last), figsize=(5*len(available_last), 5))
+    if len(available_last) == 1:
+        axes = [axes]
+    
+    for idx, checkpoint in enumerate(available_last):
+        if checkpoint not in available_mean:
+            continue
+            
+        ax = axes[idx]
+        
+        res_last = results['last_token'][checkpoint]['results']
+        res_mean = results['mean_pool'][checkpoint]['results']
+        
+        ax.plot(res_last, 'b-', alpha=0.7, label='Last Token', linewidth=2)
+        ax.plot(res_mean, 'g-', alpha=0.7, label='Mean Pool', linewidth=2)
+        ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Chance')
+        
+        ax.set_xlabel("Layer Index")
+        ax.set_ylabel("Accuracy")
+        ax.set_title(f"{checkpoint}: Mean Pool vs Last Token")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0.4, 1.0)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/pooling_comparison.png", dpi=150)
+    print(f"\nSaved: {output_dir}/pooling_comparison.png")
+    
+    # Summary table
+    print("\n" + "-"*60)
+    print("POOLING COMPARISON SUMMARY")
+    print("-"*60)
+    print(f"{'Checkpoint':<12} {'Last Token':<15} {'Mean Pool':<15} {'Winner':<12}")
+    print("-"*60)
+    
+    for checkpoint in available_last:
+        if checkpoint in results['mean_pool']:
+            last = results['last_token'][checkpoint]['best_score']
+            mean = results['mean_pool'][checkpoint]['best_score']
+            winner = "Mean" if mean > last + 0.01 else ("Last" if last > mean + 0.01 else "Tie")
+            print(f"{checkpoint:<12} {last:<15.3f} {mean:<15.3f} {winner:<12}")
+    
+    return results
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
 def train_all_probes(data_file="probe_data.pt", output_dir="probe_results", 
-                     run_control=True, run_heatmap=True):
+                     run_control=True, run_heatmap=True, run_pooling_comparison=True):
     """Main function to train all probe types."""
     
     os.makedirs(output_dir, exist_ok=True)
@@ -681,7 +801,13 @@ def train_all_probes(data_file="probe_data.pt", output_dir="probe_results",
         data, num_layers, output_dir, mode='regression'
     )
     
-    # 6. PCA Visualizations
+    # 6. Pooling Comparison (if mean pooling available)
+    if run_pooling_comparison and has_mean_pooling:
+        all_results['pooling_comparison'] = compare_pooling_methods(
+            data, num_layers, output_dir, checkpoints
+        )
+    
+    # 7. PCA Visualizations
     for color_by in ['correctness', 'topic', 'difficulty']:
         generate_pca_visualization(data, num_layers, output_dir, color_by=color_by)
     
@@ -693,6 +819,14 @@ def train_all_probes(data_file="probe_data.pt", output_dir="probe_results",
         'has_50pct': has_50pct,
         'has_mean_pooling': has_mean_pooling,
     }
+    
+    # Add pooling comparison to summary if available
+    if 'pooling_comparison' in all_results and all_results['pooling_comparison']:
+        pc = all_results['pooling_comparison']
+        for checkpoint in pc.get('last_token', {}):
+            summary[f'pooling_{checkpoint}_last_token'] = pc['last_token'][checkpoint]['best_score']
+            if checkpoint in pc.get('mean_pool', {}):
+                summary[f'pooling_{checkpoint}_mean_pool'] = pc['mean_pool'][checkpoint]['best_score']
     
     # Add best results
     for probe_type, results in all_results.items():
