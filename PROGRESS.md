@@ -29,11 +29,18 @@
 
 ## First Run Results (150 samples)
 
-### Dataset Stats
+### Dataset Stats (First Run - 7B Model)
 - Samples: 150 (75 correct, 75 incorrect)
 - Topics: Algebra (87), Precalculus (27), Number Theory (19), Counting (17)
 - Levels: L1 (12), L2 (27), L3 (30), L4 (36), L5 (45)
 - Model: Qwen2.5-Math-7B-Instruct (4-bit)
+
+### Model Switch (Nov 30, 2025)
+**Changed to `Qwen2.5-Math-1.5B-Instruct`** for faster iteration:
+- ~4x faster inference
+- Lower accuracy → more balanced errors naturally
+- Hidden dim: 1536 (vs 3584 for 7B)
+- Same Qwen family, same prompt format
 
 ### Probe Results
 
