@@ -45,15 +45,41 @@ def extract_boxed(text):
     return None
 
 
+def extract_final_value(text):
+    """
+    Extract the final value from a derivation chain like "... = D" or "... = 42".
+    Returns the rightmost value after the last equals sign.
+    """
+    text = text.strip()
+    
+    # Find the last equals sign and extract what follows
+    # This handles chains like "a = b = c = 42"
+    last_eq_pos = text.rfind('=')
+    if last_eq_pos != -1:
+        final = text[last_eq_pos + 1:].strip()
+        # Remove trailing period if present
+        final = final.rstrip('.')
+        # Make sure it's not too long (a derivation, not a simple value)
+        if len(final) < 50 and len(final) > 0:
+            return final
+    
+    return None
+
+
 def extract_answer(text):
     """
     Extracts the answer from model output.
-    Priority: \boxed{} > math-verify parser > raw text
+    Priority: \boxed{} > final value from derivation > math-verify parser > raw text
     """
     # Try boxed extraction first
     boxed = extract_boxed(text)
     if boxed:
         return boxed.strip()
+    
+    # Try extracting final value from derivation (e.g., "... = D")
+    final = extract_final_value(text)
+    if final and len(final) < len(text):
+        return final
     
     # Try math-verify parser
     if MATH_VERIFY_AVAILABLE:
@@ -75,16 +101,41 @@ def normalize_latex(s):
     # Remove display math delimiters
     s = re.sub(r'^\$+|\$+$', '', s)
     s = re.sub(r'^\\\[|\\\]$', '', s)
+    
+    # Remove LaTeX spacing commands: \! \, \: \; \quad \qquad
+    s = re.sub(r'\\[!,;:]', '', s)
+    s = re.sub(r'\\q?quad', '', s)
+    
     # Normalize whitespace
     s = re.sub(r'\s+', ' ', s)
+    
+    # Normalize fraction commands: \dfrac -> \frac
+    s = s.replace('\\dfrac', '\\frac')
+    
     # Normalize common variants
     s = s.replace('\\left(', '(').replace('\\right)', ')')
     s = s.replace('\\left[', '[').replace('\\right]', ']')
     s = s.replace('\\left{', '{').replace('\\right}', '}')
     s = s.replace('\\cdot', '*')
     s = s.replace('\\times', '*')
+    
     # Normalize base notation: 4210_{5} -> 4210_5, 4210_{7} -> 4210_7
     s = re.sub(r'_\{(\d+)\}', r'_\1', s)
+    
+    # Strip units from answers: "575\text{ students}" -> "575"
+    # Common units: students, multiples, square feet, feet, meters, etc.
+    s = re.sub(r'\\text\{\s*(students?|multiples?|square feet|feet|meters?|units?|dollars?|cents?|people|items?|ways?|hours?|minutes?|seconds?|days?|years?|inches?|cm|mm|km|miles?|pounds?|kg|grams?|liters?|gallons?)\s*\}', '', s, flags=re.IGNORECASE)
+    
+    # Strip degree symbols: 840^\circ or 840° -> 840
+    s = re.sub(r'\^\\circ', '', s)
+    s = s.replace('°', '')
+    
+    # Handle \text{} wrapper for single letters/values: \text{A} -> A, \text{(E)} -> E
+    # First, handle \text{(X)} -> X (multiple choice with parens)
+    s = re.sub(r'\\text\{\(([A-Za-z])\)\}', r'\1', s)
+    # Then, handle \text{X} -> X (plain single character)
+    s = re.sub(r'\\text\{([A-Za-z0-9])\}', r'\1', s)
+    
     return s.strip()
 
 
@@ -93,6 +144,15 @@ def latex_to_sympy_string(expr_str):
     Convert LaTeX notation to a string that SymPy can parse with sympify.
     """
     s = expr_str.strip()
+    
+    # Normalize \dfrac to \frac
+    s = s.replace('\\dfrac', '\\frac')
+    
+    # Handle space-separated \frac: \frac 59 -> \frac{5}{9}
+    s = re.sub(r'\\frac\s+(\d)\s*(\d)', r'\\frac{\1}{\2}', s)
+    # Also handle single args: \frac 5{9} or \frac{5} 9
+    s = re.sub(r'\\frac\s*\{([^{}]+)\}\s*(\d)', r'\\frac{\1}{\2}', s)
+    s = re.sub(r'\\frac\s+(\d)\s*\{([^{}]+)\}', r'\\frac{\1}{\2}', s)
     
     # Handle \frac{a}{b} -> (a)/(b)
     # Need to handle nested braces properly
@@ -249,6 +309,11 @@ def extract_tuple_elements(s):
     """
     s = s.strip()
     
+    # Remove \left and \right modifiers
+    s = s.replace('\\left(', '(').replace('\\right)', ')')
+    s = s.replace('\\left[', '[').replace('\\right]', ']')
+    s = s.strip()
+    
     # Must start with ( and end with )
     if not (s.startswith('(') and s.endswith(')')):
         return None
@@ -305,11 +370,14 @@ def compare_tuple_elements(tup1, tup2):
 
 
 def normalize_number_string(s):
-    """
-    Normalize a number string by removing thousands separators.
+    r"""
+    Normalize a number string by removing thousands separators and LaTeX formatting.
     E.g., "90,900,909" -> "90900909"
+    E.g., "9,\!240" -> "9240"
     """
     s = s.strip()
+    # Remove LaTeX spacing commands within numbers
+    s = re.sub(r'\\[!,;:]', '', s)
     # Remove commas used as thousands separators
     # But be careful: (1, 2) has commas that aren't thousands separators
     # Only remove if it looks like a plain number with commas
@@ -426,6 +494,16 @@ def is_equivalent(model_ans, ground_truth):
     # Normalize inputs
     model_ans = str(model_ans).strip()
     ground_truth = str(ground_truth).strip()
+    
+    # 0. If model answer contains '=' and is longer, try to extract final value
+    # This handles cases like long derivations ending with "= D" where GT is just "D"
+    # or chains like "a = b = c = 42" where GT is "42"
+    if '=' in model_ans and len(model_ans) > len(ground_truth) + 5:
+        final_value = extract_final_value(model_ans)
+        if final_value:
+            # Recursively check if the extracted value matches
+            if is_equivalent(final_value, ground_truth):
+                return True
     
     # 1. Direct String Equality (Normalized)
     norm_ans = normalize_latex(model_ans).lower()

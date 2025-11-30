@@ -111,6 +111,58 @@ test_cases = [
     (r"4210_{5}", r"4210_5", True, "Base notation: braces vs no braces"),
     (r"4210_{7}", r"4210_7", True, "Base notation: braces vs no braces"),
     (r"101_{2}", r"101_2", True, "Binary base notation"),
+    
+    # === AUDIT CSV FIX CASES ===
+    
+    # LaTeX formatting: \dfrac vs \frac
+    (r"\dfrac{1}{128}", r"\frac{1}{128}", True, "dfrac vs frac"),
+    (r"\frac 59", r"\frac{5}{9}", True, "Space-separated frac args"),
+    (r"\frac 34", r"\frac{3}{4}", True, "Space-separated frac args"),
+    (r"\dfrac{3}{2}", r"\frac{3}{2}", True, "dfrac vs frac simple"),
+    (r"\dfrac{1}{12}", r"\frac{1}{12}", True, "dfrac vs frac"),
+    (r"\dfrac{1}{3}", r"\frac{1}{3}", True, "dfrac vs frac"),
+    
+    # LaTeX formatting: \text{} wrapper
+    (r"\text{A}", r"A", True, "text wrapper single letter"),
+    (r"\text{M}", r"M", True, "text wrapper single letter"),
+    (r"\text{(E)}", r"E", True, "text wrapper with parens"),
+    (r"\text{(D)}", r"D", True, "text wrapper with parens"),
+    (r"\text{E}", r"\text{(E)}", True, "text formats both directions"),
+    
+    # LaTeX spacing commands (aesthetic, should be ignored)
+    (r"\!\sqrt{33}", r"\sqrt{33}", True, "Negative spacing in sqrt"),
+    (r"9,\!240", r"9240", True, "Thousands separator with \\!"),
+    (r"362,\!880", r"362880", True, "Large number with \\!"),
+    
+    # Units should be stripped
+    (r"575\text{ students}", r"575", True, "Strip text units: students"),
+    (r"9 \text{ multiples}", r"9", True, "Strip text units: multiples"),
+    (r"135\text{ square feet}", r"135", True, "Strip text units: square feet"),
+    (r"575", r"575\text{ students}", True, "Units comparison reverse"),
+    
+    # Degree symbols should be stripped
+    (r"840^\circ", r"840", True, "Degree symbol stripped"),
+    (r"90^\circ", r"90", True, "Degree symbol stripped"),
+    (r"840", r"840^\circ", True, "Degree symbol reverse"),
+    
+    # Tuples with decimal/fraction equivalence
+    (r"\left( \frac{11}{2}, -1, 1 \right)", r"\left( 5.5, -1, 1 \right)", True, "3D tuple: frac vs decimal"),
+    (r"(5.5, -1, 1)", r"(\frac{11}{2}, -1, 1)", True, "3D tuple: decimal vs frac"),
+    
+    # Long derivation ending with final answer
+    (r"... some long derivation = D", r"D", True, "Derivation ending with = D"),
+    (r"a + b = c + d = 42", r"42", True, "Chain equals ending with number"),
+    (r"\frac{D(C^2 + (1 - D)^2)}{C^2 + (1 - D)^2} = D.", r"D", True, "Complex derivation ending = D"),
+    
+    # Multiple choice answer formats
+    (r"A", r"\text{A}", True, "MC: plain vs text"),
+    (r"E", r"\text{(E)}", True, "MC: plain vs text with parens"),
+    (r"D", r"\text{(D)}", True, "MC: plain vs text with parens"),
+    
+    # Cases that should still fail
+    (r"11", r"12", False, "Different single-digit numbers"),
+    (r"\frac{1}{4}", r"\frac{3}{4}", False, "Different fractions"),
+    (r"A", r"B", False, "Different letters"),
 ]
 
 
