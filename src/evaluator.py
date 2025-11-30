@@ -106,11 +106,22 @@ def normalize_latex(s):
     s = re.sub(r'\\[!,;:]', '', s)
     s = re.sub(r'\\q?quad', '', s)
     
-    # Normalize whitespace
+    # Normalize whitespace (but preserve some structure)
     s = re.sub(r'\s+', ' ', s)
     
     # Normalize fraction commands: \dfrac -> \frac
     s = s.replace('\\dfrac', '\\frac')
+    
+    # Normalize shorthand fractions: \frac12 -> \frac{1}{2}, \frac1{2} -> \frac{1}{2}
+    # Handle \fracXY where X and Y are single digits
+    s = re.sub(r'\\frac(\d)(\d)', r'\\frac{\1}{\2}', s)
+    # Handle \fracX{Y} or \frac{X}Y
+    s = re.sub(r'\\frac(\d)\{', r'\\frac{\1}{', s)
+    s = re.sub(r'\}(\d)(?![0-9])', r'}{\1}', s)
+    
+    # Normalize shorthand sqrt: \sqrt6 -> \sqrt{6}, \sqrtX -> \sqrt{X}
+    s = re.sub(r'\\sqrt(\d)(?!\d)', r'\\sqrt{\1}', s)
+    s = re.sub(r'\\sqrt([a-zA-Z])(?![a-zA-Z{])', r'\\sqrt{\1}', s)
     
     # Normalize common variants
     s = s.replace('\\left(', '(').replace('\\right)', ')')
@@ -188,6 +199,14 @@ def latex_to_sympy_string(expr_str):
     s = s.replace('\\times', '*')
     s = s.replace('\\pi', 'pi')
     s = s.replace('\\', '')
+    
+    # Handle implicit multiplication:
+    # - Number followed by parenthesis: 3(x) -> 3*(x), -3(x) -> -3*(x)
+    # - Closing paren followed by opening paren: )(  -> )*(
+    # - Number followed by variable: 2x -> 2*x, 3y -> 3*y
+    s = re.sub(r'(\d)\(', r'\1*(', s)  # 3( -> 3*(
+    s = re.sub(r'\)\(', r')*(', s)     # )( -> )*(
+    s = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', s)  # 2x -> 2*x
     
     # Handle implicit multiplication with i (imaginary unit)
     # Cases: 2i, )i, xi at end of expression
@@ -505,6 +524,20 @@ def is_equivalent(model_ans, ground_truth):
             if is_equivalent(final_value, ground_truth):
                 return True
     
+    # 0.5. Handle variable prefixes: "x = 3" vs "3", "b=4" vs "4"
+    # Strip common variable prefixes from both sides
+    var_prefixes = [r'^[a-zA-Z]\s*=\s*', r'^[a-zA-Z]_?\d?\s*=\s*']
+    ans_stripped = model_ans
+    gt_stripped = ground_truth
+    for pattern in var_prefixes:
+        ans_stripped = re.sub(pattern, '', ans_stripped)
+        gt_stripped = re.sub(pattern, '', gt_stripped)
+    
+    # If stripping changed something, recursively check
+    if ans_stripped != model_ans or gt_stripped != ground_truth:
+        if is_equivalent(ans_stripped, gt_stripped):
+            return True
+    
     # 1. Direct String Equality (Normalized)
     norm_ans = normalize_latex(model_ans).lower()
     norm_gt = normalize_latex(ground_truth).lower()
@@ -513,6 +546,27 @@ def is_equivalent(model_ans, ground_truth):
     
     # Remove all whitespace for comparison
     if norm_ans.replace(' ', '') == norm_gt.replace(' ', ''):
+        return True
+    
+    # 1.5. Strip outer parentheses: (4x - 7) vs 4x - 7
+    def strip_outer_parens(s):
+        s = s.strip()
+        if s.startswith('(') and s.endswith(')'):
+            # Check if the parens are balanced (not like "(a) + (b)")
+            depth = 0
+            for i, c in enumerate(s):
+                if c == '(':
+                    depth += 1
+                elif c == ')':
+                    depth -= 1
+                if depth == 0 and i < len(s) - 1:
+                    return s  # Parens aren't wrapping the whole thing
+            return s[1:-1]
+        return s
+    
+    norm_ans_no_parens = strip_outer_parens(norm_ans.replace(' ', ''))
+    norm_gt_no_parens = strip_outer_parens(norm_gt.replace(' ', ''))
+    if norm_ans_no_parens == norm_gt_no_parens:
         return True
     
     # 2. Normalize numbers with thousands separators (e.g., "90,900,909" -> "90900909")

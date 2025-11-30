@@ -163,6 +163,37 @@ test_cases = [
     (r"11", r"12", False, "Different single-digit numbers"),
     (r"\frac{1}{4}", r"\frac{3}{4}", False, "Different fractions"),
     (r"A", r"B", False, "Different letters"),
+    
+    # === NEW FALSE NEGATIVE FIXES (from 500 sample audit) ===
+    
+    # Shorthand fractions (Row 135, 371, 469)
+    (r"-\frac12", r"-\frac{1}{2}", True, "Shorthand frac: -\\frac12"),
+    (r"\frac78", r"\frac{7}{8}", True, "Shorthand frac: \\frac78"),
+    (r"-\frac32", r"-\frac{3}{2}", True, "Shorthand frac: -\\frac32"),
+    (r"\frac{\sqrt6}3", r"\frac{\sqrt{6}}{3}", True, "Shorthand sqrt in frac"),
+    
+    # Spacing in expressions (Row 429)
+    (r"1+\sqrt5", r"1 + \sqrt{5}", True, "Spacing: 1+sqrt5 vs 1 + sqrt{5}"),
+    (r"2+3i", r"2 + 3i", True, "Spacing in complex"),
+    
+    # Variable prefixes (Row 15, 232, 394)
+    (r"x = 3", r"3", True, "Variable prefix: x = 3 vs 3"),
+    (r"x=4", r"4", True, "Variable prefix: x=4 vs 4"),
+    (r"b=4", r"4", True, "Variable prefix: b=4 vs 4"),
+    (r"n = 10", r"10", True, "Variable prefix: n = 10 vs 10"),
+    (r"3", r"x = 3", True, "Variable prefix reverse"),
+    
+    # Outer parentheses (Row 476)
+    (r"(4x - 7)", r"4x - 7", True, "Outer parens: (4x-7) vs 4x-7"),
+    (r"(a + b)", r"a + b", True, "Outer parens simple"),
+    (r"(x)", r"x", True, "Outer parens single var"),
+    
+    # Algebraic equivalence (Row 24) - should work via sympy
+    (r"-3(x+2)(x-1)", r"-3x^2 - 3x + 6", True, "Algebraic: factored vs expanded"),
+    
+    # These should still fail
+    (r"x = 3", r"4", False, "Different values with prefix"),
+    (r"(a + b)", r"a - b", False, "Different expressions"),
 ]
 
 
