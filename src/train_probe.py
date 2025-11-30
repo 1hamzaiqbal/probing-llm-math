@@ -10,9 +10,13 @@ Enhanced with:
 - Difference-of-means probes (Geometry of Truth style)
 - 2D heatmap visualization (layer × checkpoint)
 - Control task (shuffled labels) for validation
+- MLP probes (non-linear)
 """
 
 import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import argparse
 import json
@@ -637,6 +641,166 @@ def generate_pca_visualization(data, num_layers, output_dir, color_by='correctne
 
 
 # =============================================================================
+# MLP PROBES (NON-LINEAR)
+# =============================================================================
+
+class MLPProbe(nn.Module):
+    """Simple 2-layer MLP for probing."""
+    def __init__(self, input_dim, hidden_dim=128, num_classes=2, dropout=0.3):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_classes)
+        )
+    
+    def forward(self, x):
+        return self.net(x)
+
+
+def train_mlp_probe(X_train, y_train, X_test, y_test, input_dim, num_classes=2, 
+                    epochs=100, lr=0.001, batch_size=32, verbose=False):
+    """
+    Train an MLP probe and return test accuracy.
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Convert to tensors
+    X_train_t = torch.FloatTensor(X_train).to(device)
+    y_train_t = torch.LongTensor(y_train).to(device)
+    X_test_t = torch.FloatTensor(X_test).to(device)
+    y_test_t = torch.LongTensor(y_test).to(device)
+    
+    # Create data loader
+    train_dataset = TensorDataset(X_train_t, y_train_t)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    
+    # Initialize model
+    model = MLPProbe(input_dim, num_classes=num_classes).to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    
+    # Training loop
+    model.train()
+    for epoch in range(epochs):
+        total_loss = 0
+        for batch_X, batch_y in train_loader:
+            optimizer.zero_grad()
+            outputs = model(batch_X)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        
+        if verbose and epoch % 20 == 0:
+            print(f"  Epoch {epoch}: Loss = {total_loss/len(train_loader):.4f}")
+    
+    # Evaluation
+    model.eval()
+    with torch.no_grad():
+        outputs = model(X_test_t)
+        _, predicted = torch.max(outputs, 1)
+        accuracy = (predicted == y_test_t).float().mean().item()
+    
+    return accuracy
+
+
+def train_mlp_success_probe(data, num_layers, output_dir, checkpoints=['0pct', '50pct', '100pct']):
+    """
+    Train MLP probes for success prediction and compare with linear probes.
+    """
+    print("\n" + "="*60)
+    print("TRAINING MLP SUCCESS PROBES")
+    print("="*60)
+    
+    y = np.array([1 if d['is_correct'] else 0 for d in data])
+    hidden_dim = data[0]['activations_0pct'].shape[1]
+    
+    results = {}
+    
+    for checkpoint in checkpoints:
+        key = f'activations_{checkpoint}'
+        if key not in data[0]:
+            continue
+            
+        print(f"\n--- {checkpoint} checkpoint ---")
+        
+        mlp_results = []
+        linear_results = []
+        
+        for layer_idx in range(num_layers):
+            X = np.array([d[key][layer_idx].numpy() for d in data])
+            
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42, stratify=y
+            )
+            
+            # MLP probe
+            mlp_acc = train_mlp_probe(X_train, y_train, X_test, y_test, hidden_dim, num_classes=2)
+            mlp_results.append(mlp_acc)
+            
+            # Linear probe for comparison
+            clf = LogisticRegression(max_iter=2000, solver='lbfgs', class_weight='balanced')
+            clf.fit(X_train, y_train)
+            linear_acc = accuracy_score(y_test, clf.predict(X_test))
+            linear_results.append(linear_acc)
+            
+            if layer_idx % 5 == 0:
+                print(f"  Layer {layer_idx}: Linear={linear_acc:.3f}, MLP={mlp_acc:.3f}")
+        
+        best_mlp_layer = np.argmax(mlp_results)
+        best_linear_layer = np.argmax(linear_results)
+        
+        print(f"\n  Linear Best: Layer {best_linear_layer} = {linear_results[best_linear_layer]:.3f}")
+        print(f"  MLP Best: Layer {best_mlp_layer} = {mlp_results[best_mlp_layer]:.3f}")
+        
+        results[checkpoint] = {
+            'linear': linear_results,
+            'mlp': mlp_results,
+            'linear_best': (best_linear_layer, linear_results[best_linear_layer]),
+            'mlp_best': (best_mlp_layer, mlp_results[best_mlp_layer])
+        }
+    
+    # Plot comparison
+    fig, axes = plt.subplots(1, len(results), figsize=(5*len(results), 5))
+    if len(results) == 1:
+        axes = [axes]
+    
+    for idx, (checkpoint, res) in enumerate(results.items()):
+        ax = axes[idx]
+        ax.plot(res['linear'], 'b-', alpha=0.7, label='Linear (LogReg)', linewidth=2)
+        ax.plot(res['mlp'], 'r-', alpha=0.7, label='MLP', linewidth=2)
+        ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Chance')
+        ax.set_xlabel("Layer Index")
+        ax.set_ylabel("Accuracy")
+        ax.set_title(f"{checkpoint}: Linear vs MLP")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0.4, 1.0)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/mlp_vs_linear.png", dpi=150)
+    print(f"\nSaved: {output_dir}/mlp_vs_linear.png")
+    
+    # Summary
+    print("\n" + "-"*60)
+    print("MLP vs LINEAR SUMMARY")
+    print("-"*60)
+    print(f"{'Checkpoint':<12} {'Linear Best':<15} {'MLP Best':<15} {'Δ':<10}")
+    print("-"*60)
+    
+    for checkpoint, res in results.items():
+        linear_best = res['linear_best'][1]
+        mlp_best = res['mlp_best'][1]
+        delta = mlp_best - linear_best
+        symbol = "+" if delta > 0 else ""
+        print(f"{checkpoint:<12} {linear_best:<15.3f} {mlp_best:<15.3f} {symbol}{delta:<10.3f}")
+    
+    return results
+
+
+# =============================================================================
 # MEAN POOLING vs LAST TOKEN COMPARISON
 # =============================================================================
 
@@ -761,7 +925,8 @@ def compare_pooling_methods(data, num_layers, output_dir, checkpoints=['0pct', '
 # =============================================================================
 
 def train_all_probes(data_file="probe_data.pt", output_dir="probe_results", 
-                     run_control=True, run_heatmap=True, run_pooling_comparison=True):
+                     run_control=True, run_heatmap=True, run_pooling_comparison=True,
+                     run_mlp=False):
     """Main function to train all probe types."""
     
     os.makedirs(output_dir, exist_ok=True)
@@ -807,7 +972,11 @@ def train_all_probes(data_file="probe_data.pt", output_dir="probe_results",
             data, num_layers, output_dir, checkpoints
         )
     
-    # 7. PCA Visualizations
+    # 7. MLP Probes (non-linear comparison)
+    if run_mlp:
+        all_results['mlp'] = train_mlp_success_probe(data, num_layers, output_dir, checkpoints)
+    
+    # 8. PCA Visualizations
     for color_by in ['correctness', 'topic', 'difficulty']:
         generate_pca_visualization(data, num_layers, output_dir, color_by=color_by)
     
@@ -869,6 +1038,8 @@ if __name__ == "__main__":
                         help="Skip control task (shuffled labels)")
     parser.add_argument("--no_heatmap", action="store_true",
                         help="Skip 2D heatmap generation")
+    parser.add_argument("--mlp", action="store_true",
+                        help="Train MLP probes in addition to linear probes")
     
     args = parser.parse_args()
     
@@ -877,4 +1048,5 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         run_control=not args.no_control,
         run_heatmap=not args.no_heatmap,
+        run_mlp=args.mlp,
     )
