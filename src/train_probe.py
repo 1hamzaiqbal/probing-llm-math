@@ -27,17 +27,28 @@ import seaborn as sns
 
         
 def load_data(data_file):
-    """Load probe data and extract metadata."""
+    """Load probe data and extract metadata. Handles both old and new formats."""
     print(f"Loading data from {data_file}...")
-    data = torch.load(data_file)
+    loaded = torch.load(data_file)
     
-    print(f"Loaded {len(data)} samples")
+    # Handle new format with metadata
+    if isinstance(loaded, dict) and 'data' in loaded and 'metadata' in loaded:
+        data = loaded['data']
+        metadata = loaded['metadata']
+        print(f"Loaded {len(data)} samples (new format with metadata)")
+        print(f"Metadata: {metadata}")
+    else:
+        # Old format: just a list of samples
+        data = loaded
+        metadata = None
+        print(f"Loaded {len(data)} samples (legacy format)")
     
-    # Extract metadata
+    # Extract dimensions from data
     num_layers = data[0]['activations_0pct'].shape[0]
     hidden_dim = data[0]['activations_0pct'].shape[1]
     
     has_50pct = 'activations_50pct' in data[0]
+    has_mean_pooling = 'activations_0pct_mean' in data[0]
     
     # Get unique topics and levels
     topics = list(set(d['topic'] for d in data))
@@ -47,8 +58,9 @@ def load_data(data_file):
     print(f"Topics: {topics}")
     print(f"Levels: {sorted(levels)}")
     print(f"Has 50% checkpoints: {has_50pct}")
+    print(f"Has mean pooling: {has_mean_pooling}")
     
-    return data, num_layers, hidden_dim, has_50pct
+    return data, num_layers, hidden_dim, has_50pct, has_mean_pooling
 
 
 # =============================================================================
@@ -635,12 +647,15 @@ def train_all_probes(data_file="probe_data.pt", output_dir="probe_results",
     os.makedirs(output_dir, exist_ok=True)
     
     # Load data
-    data, num_layers, hidden_dim, has_50pct = load_data(data_file)
+    data, num_layers, hidden_dim, has_50pct, has_mean_pooling = load_data(data_file)
     
     # Determine checkpoints
     checkpoints = ['0pct', '100pct']
     if has_50pct:
         checkpoints.insert(1, '50pct')
+    
+    # If mean pooling is available, we can optionally train on those too
+    # For now, we use the default (last_token) activations
     
     all_results = {}
     
@@ -676,6 +691,7 @@ def train_all_probes(data_file="probe_data.pt", output_dir="probe_results",
         'num_layers': num_layers,
         'hidden_dim': hidden_dim,
         'has_50pct': has_50pct,
+        'has_mean_pooling': has_mean_pooling,
     }
     
     # Add best results

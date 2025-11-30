@@ -6,6 +6,14 @@ Captures:
 - Difficulty levels (1-5)
 - Activations at 0% (question-only), 50% (mid-generation), 100% (full response)
 - Correctness labels
+
+Pooling methods:
+- last_token: Extract activation at last token position (default)
+- mean: Mean-pool over all tokens in the range
+- both: Capture both for comparison
+
+Output format:
+- dict with 'data' (list of samples) and 'metadata' (run info)
 """
 
 import torch
@@ -131,6 +139,43 @@ def get_activations_at_position(model, tokenizer, text, position=-1):
     return torch.stack(activations)  # [num_layers+1, hidden_dim]
 
 
+def get_activations_mean_pool(model, tokenizer, text, start_pos=0, end_pos=None):
+    """
+    Get mean-pooled hidden state activations over a range of tokens.
+    
+    Args:
+        model: The loaded model
+        tokenizer: The tokenizer
+        text: Full text to process
+        start_pos: Start token position (inclusive, default 0)
+        end_pos: End token position (exclusive, default None = end of sequence)
+    
+    Returns:
+        Tensor of shape [num_layers+1, hidden_dim]
+    """
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    seq_len = inputs.input_ids.shape[1]
+    
+    if end_pos is None:
+        end_pos = seq_len
+    
+    # Clamp positions
+    start_pos = max(0, start_pos)
+    end_pos = min(seq_len, end_pos)
+    
+    with torch.no_grad():
+        outputs = model(**inputs, output_hidden_states=True)
+    
+    # Mean pool over the token range [start_pos:end_pos]
+    activations = []
+    for layer_hidden in outputs.hidden_states:
+        # layer_hidden is (batch=1, seq_len, hidden_dim)
+        pooled = layer_hidden[0, start_pos:end_pos, :].mean(dim=0).cpu()
+        activations.append(pooled)
+    
+    return torch.stack(activations)  # [num_layers+1, hidden_dim]
+
+
 def collect_data(
     num_samples=200,
     output_file="probe_data.pt",
@@ -140,6 +185,8 @@ def collect_data(
     balance=False,
     capture_50pct=True,
     exclude_geometry=True,
+    pooling="last_token",
+    seed=42,
 ):
     """
     Collect probe training data with full metadata.
@@ -148,7 +195,13 @@ def collect_data(
     - 0%: After question, before any generation (prompt_activations)
     - 50%: After generating half of the response tokens (mid_activations)
     - 100%: After full response (response_activations)
+    
+    Args:
+        pooling: "last_token" (default), "mean", or "both"
     """
+    # Set random seed for reproducibility
+    random.seed(seed)
+    torch.manual_seed(seed)
     print(f"Loading {dataset_name} dataset...")
     
     if dataset_name.lower() == "gsm8k":
@@ -199,6 +252,8 @@ def collect_data(
     
     print(f"Audit log: {audit_file}")
     print(f"50% checkpoint capture: {'enabled' if capture_50pct else 'disabled'}")
+    print(f"Pooling method: {pooling}")
+    print(f"Random seed: {seed}")
     
     # Shuffle dataset indices
     indices = list(range(len(dataset)))
@@ -251,27 +306,56 @@ def collect_data(
         full_len = full_tokens.input_ids.shape[1]
         response_len = full_len - prompt_len
         
-        # === Capture 0% activations (last token of prompt, before generation) ===
-        activations_0pct = get_activations_at_position(
-            model, tokenizer, prompt_text, position=-1
-        )
+        # === Capture activations based on pooling method ===
         
-        # === Capture 100% activations (last token of full response) ===
-        activations_100pct = get_activations_at_position(
-            model, tokenizer, full_text, position=-1
-        )
-        
-        # === Capture 50% activations (mid-response, via replay) ===
+        # Initialize containers
+        activations_0pct = None
         activations_50pct = None
-        if capture_50pct and response_len > 2:
-            # Calculate 50% token position
-            mid_response_tokens = response_len // 2
-            mid_position = prompt_len + mid_response_tokens - 1  # -1 for 0-indexing
-            
-            # Get activations at mid position
-            activations_50pct = get_activations_at_position(
-                model, tokenizer, full_text, position=mid_position
+        activations_100pct = None
+        activations_0pct_mean = None
+        activations_50pct_mean = None
+        activations_100pct_mean = None
+        
+        # Last token extraction
+        if pooling in ("last_token", "both"):
+            # 0%: Last token of prompt
+            activations_0pct = get_activations_at_position(
+                model, tokenizer, prompt_text, position=-1
             )
+            # 100%: Last token of full response
+            activations_100pct = get_activations_at_position(
+                model, tokenizer, full_text, position=-1
+            )
+            # 50%: Mid-response token
+            if capture_50pct and response_len > 2:
+                mid_response_tokens = response_len // 2
+                mid_position = prompt_len + mid_response_tokens - 1
+                activations_50pct = get_activations_at_position(
+                    model, tokenizer, full_text, position=mid_position
+                )
+        
+        # Mean pooling extraction
+        if pooling in ("mean", "both"):
+            # 0%: Mean over all prompt tokens
+            activations_0pct_mean = get_activations_mean_pool(
+                model, tokenizer, prompt_text, start_pos=0, end_pos=None
+            )
+            # 100%: Mean over all tokens (prompt + response)
+            activations_100pct_mean = get_activations_mean_pool(
+                model, tokenizer, full_text, start_pos=0, end_pos=None
+            )
+            # 50%: Mean over prompt + first half of response
+            if capture_50pct and response_len > 2:
+                mid_position = prompt_len + response_len // 2
+                activations_50pct_mean = get_activations_mean_pool(
+                    model, tokenizer, full_text, start_pos=0, end_pos=mid_position
+                )
+        
+        # For backwards compatibility: if using mean only, store in the main fields
+        if pooling == "mean":
+            activations_0pct = activations_0pct_mean
+            activations_50pct = activations_50pct_mean
+            activations_100pct = activations_100pct_mean
         
         # Write audit log
         with open(audit_file, "a", newline="", encoding="utf-8") as f:
@@ -299,12 +383,20 @@ def collect_data(
             "prediction": pred_text,
             "is_correct": is_correct,
             "num_response_tokens": response_len,
+            "pooling_method": pooling,
             "activations_0pct": activations_0pct,    # [num_layers+1, hidden_dim]
             "activations_100pct": activations_100pct,  # [num_layers+1, hidden_dim]
         }
         
         if activations_50pct is not None:
             record["activations_50pct"] = activations_50pct
+        
+        # If both pooling methods, save mean versions separately
+        if pooling == "both":
+            record["activations_0pct_mean"] = activations_0pct_mean
+            record["activations_100pct_mean"] = activations_100pct_mean
+            if activations_50pct_mean is not None:
+                record["activations_50pct_mean"] = activations_50pct_mean
         
         # Legacy field names for compatibility with existing train_probe.py
         record["prompt_activations"] = activations_0pct
@@ -325,11 +417,35 @@ def collect_data(
             torch.save(data, output_file)
 
     pbar.close()
-    torch.save(data, output_file)
+    
+    # Get model info from the first sample
+    num_layers = data[0]['activations_0pct'].shape[0] if data else 0
+    hidden_dim = data[0]['activations_0pct'].shape[1] if data else 0
+    
+    # Create metadata dict
+    metadata = {
+        "num_samples": len(data),
+        "num_layers": num_layers,
+        "hidden_dim": hidden_dim,
+        "pooling_method": pooling,
+        "dataset": dataset_name,
+        "seed": seed,
+        "has_50pct": capture_50pct,
+        "has_mean_pooling": pooling in ("mean", "both"),
+        "has_last_token": pooling in ("last_token", "both"),
+    }
+    
+    # Save data and metadata together
+    save_dict = {
+        "data": data,
+        "metadata": metadata,
+    }
+    torch.save(save_dict, output_file)
     
     print(f"\n{'='*50}")
     print(f"Finished! Saved {len(data)} samples to {output_file}")
     print(f"Correct: {correct_count}, Incorrect: {incorrect_count}")
+    print(f"Model: {num_layers} layers, {hidden_dim} hidden dim")
     
     # Print topic/level distribution
     topic_counts = {}
@@ -360,6 +476,11 @@ if __name__ == "__main__":
                         help="Disable 50%% checkpoint capture (faster).")
     parser.add_argument("--include_geometry", action="store_true",
                         help="Include geometry problems (excluded by default).")
+    parser.add_argument("--pooling", type=str, default="both",
+                        choices=["last_token", "mean", "both"],
+                        help="Activation pooling method: last_token, mean, or both (default: both).")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for reproducibility.")
     
     args = parser.parse_args()
     
@@ -380,4 +501,6 @@ if __name__ == "__main__":
         balance=args.balance,
         capture_50pct=not args.no_50pct,
         exclude_geometry=not args.include_geometry,
+        pooling=args.pooling,
+        seed=args.seed,
     )
