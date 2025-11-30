@@ -1,7 +1,7 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-def load_model(model_name="Qwen/Qwen2.5-Math-7B-Instruct", device="cuda", load_in_4bit=True):
+def load_model(model_name="Qwen/Qwen2.5-Math-1.5B-Instruct", device="cuda", load_in_4bit=True):
     """
     Loads the model and tokenizer.
     Args:
