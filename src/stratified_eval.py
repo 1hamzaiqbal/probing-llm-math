@@ -142,7 +142,7 @@ def run_evaluation(problems, output_dir="eval_results", save_interval=10):
         ground_truth = evaluator.extract_answer(prob['solution'])
         
         # Generate (fast mode - no hidden states needed for eval)
-        pred_text, is_truncated = model_utils.generate_answer_fast(model, tokenizer, question)
+        pred_text, _, is_truncated = model_utils.generate_answer(model, tokenizer, question)
         
         # Evaluate
         clean_pred = evaluator.extract_answer(pred_text)
