@@ -11,10 +11,11 @@
 We trained linear probes on `Qwen2.5-Math-1.5B-Instruct` to decode internal signals about math problem success, topic, and difficulty. Key findings:
 
 1. **Success Prediction**: 73-81% accuracy - model "knows" it will fail before answering
-2. **Token Length Matters**: Incorrect answers are 60% longer (731 vs 458 tokens)
-3. **Topic Classification**: 86% accuracy (expected - distinct vocabulary)
-4. **Difficulty Estimation**: 46% (weak signal)
-5. **Model Accuracy**: 72.5% overall on stratified MATH dataset
+2. **Linear ≈ MLP**: Success signal is **linearly decodable** (no benefit from non-linear probes)
+3. **Token Length Matters**: Incorrect answers are 60% longer (731 vs 458 tokens)
+4. **Topic Classification**: 86% accuracy (expected - distinct vocabulary)
+5. **Difficulty Estimation**: 46% (weak signal)
+6. **Model Accuracy**: 72.5% overall on stratified MATH dataset
 
 ---
 
@@ -106,7 +107,30 @@ The model has **"metacognition"** - it encodes success/failure signal before gen
 
 ---
 
-## 4. Confidence Calibration
+## 4. MLP vs Linear Probes (Key Finding!)
+
+### Results by Checkpoint
+
+| Checkpoint | Linear Best | MLP Best | Δ | Winner |
+|------------|-------------|----------|------|--------|
+| **0%** | 73.0% | 72.0% | -1.0% | Linear |
+| **50%** | 73.0% | 75.0% | +2.0% | MLP |
+| **100%** | **81.0%** | 80.0% | -1.0% | Linear |
+
+### Interpretation
+
+**The success signal is linearly encoded!** 
+
+MLP probes (with hidden layer) perform nearly identically to simple logistic regression (within ±2%). This means:
+- The model represents success/failure in a **linear subspace**
+- No complex non-linear transformations needed to decode it
+- Consistent with the "linear representation hypothesis" in interpretability research
+
+This is a **cleaner story** for the paper: simple linear probes are sufficient to extract the metacognitive signal.
+
+---
+
+## 5. Confidence Calibration
 
 ### Expected Calibration Error (ECE)
 | Checkpoint | ECE | Interpretation |
@@ -140,7 +164,7 @@ The model has **"metacognition"** - it encodes success/failure signal before gen
 
 ---
 
-## 5. Topic Probes
+## 6. Topic Probes
 
 | Metric | Value |
 |--------|-------|
@@ -158,7 +182,7 @@ The model has **"metacognition"** - it encodes success/failure signal before gen
 
 ---
 
-## 6. Difficulty Probes
+## 7. Difficulty Probes
 
 | Mode | Best Score | Best Layer |
 |------|------------|------------|
@@ -170,7 +194,7 @@ The model has **"metacognition"** - it encodes success/failure signal before gen
 
 ---
 
-## 7. Stratified Model Accuracy
+## 8. Stratified Model Accuracy
 
 ### Overall
 - **Accuracy**: 290/400 = **72.5%**
@@ -188,21 +212,27 @@ Performance degrades significantly at Level 5 across all topics, with precalculu
 - 81% at 100% = strong post-hoc signal
 - Layer 16-18 is the "metacognition" zone
 
-### 2. Token Length is Highly Predictive
+### 2. Linear Probes Are Sufficient
+- MLP probes perform within ±2% of linear probes
+- Success signal is **linearly encoded** in hidden states
+- Supports the "linear representation hypothesis"
+- Simpler model = cleaner interpretation
+
+### 3. Token Length is Highly Predictive
 - **Correlation -0.49** with correctness
 - Long responses (>1024 tokens) have only 2.4% accuracy
 - Optimal range: 317-403 tokens (79.5% accuracy)
 - **Practical implication**: Can use response length as a simple failure detector
 
-### 3. Calibration Improves with Generation
+### 4. Calibration Improves with Generation
 - ECE drops from 0.228 (0%) to 0.174 (100%)
 - Model becomes more calibrated as it sees its own output
 
-### 4. Topic is Easy, Difficulty is Hard
+### 5. Topic is Easy, Difficulty is Hard
 - Topic: 86% (questions have distinctive vocabulary)
 - Difficulty: 46% (model doesn't perceive difficulty like humans)
 
-### 5. Stable Trajectories
+### 6. Stable Trajectories
 - 93% of predictions don't change during generation
 - Recovery/degradation is rare
 
@@ -215,6 +245,7 @@ Performance degrades significantly at Level 5 across all topics, with precalculu
 probe_results_1.5b_500_fixed/
 ├── success_probe_accuracy.png
 ├── success_probe_heatmap_2d.png
+├── mlp_vs_linear.png          # NEW: MLP comparison
 ├── control_task_shuffled.png
 ├── topic_probe_accuracy.png
 ├── difficulty_probe_classification.png
@@ -260,8 +291,11 @@ eval_results_1.5b/
 # Data collection
 python src/collect_probe_data.py --num_samples 500 --balance --pooling both
 
-# Probe training
+# Probe training (linear)
 python src/train_probe.py --data_file probe_data.pt --output_dir probe_results
+
+# Probe training (with MLP comparison)
+python src/train_probe.py --data_file probe_data.pt --output_dir probe_results --mlp
 
 # Token analysis
 python src/analyze_tokens.py --audit_file probe_audit.csv
