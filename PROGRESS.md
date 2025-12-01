@@ -8,14 +8,15 @@
 
 ## Executive Summary
 
-We trained linear probes on `Qwen2.5-Math-1.5B-Instruct` to decode internal signals about math problem success, topic, and difficulty. Key findings:
+We trained linear probes on Qwen2.5-Math models (1.5B and 7B) to decode internal signals about math problem success, topic, and difficulty. Key findings:
 
-1. **Success Prediction**: 73-81% accuracy - model "knows" it will fail before answering
-2. **Linear ≈ MLP**: Success signal is **linearly decodable** (no benefit from non-linear probes)
-3. **Token Length Matters**: Incorrect answers are 60% longer (731 vs 458 tokens)
-4. **Topic Classification**: 86% accuracy (expected - distinct vocabulary)
-5. **Difficulty Estimation**: 46% (weak signal)
-6. **Model Accuracy**: 72.5% overall on stratified MATH dataset
+1. **Success Prediction**: 73-90% accuracy - models "know" they will fail before answering
+2. **7B > 1.5B Metacognition**: 7B achieves **90%** success prediction vs 81% for 1.5B
+3. **Linear ≈ MLP**: Success signal is **linearly decodable** (no benefit from non-linear probes)
+4. **Token Length Matters**: Incorrect answers are 60% longer (731 vs 458 tokens)
+5. **Topic Classification**: 82-86% accuracy (expected - distinct vocabulary)
+6. **Difficulty Estimation**: 46-48% (weak signal in both models)
+7. **Model Accuracy**: 72.5% overall on stratified MATH dataset (1.5B)
 
 ---
 
@@ -205,12 +206,64 @@ Performance degrades significantly at Level 5 across all topics, with precalculu
 
 ---
 
+## 9. Model Size Comparison: 1.5B vs 7B (Key Finding!)
+
+### Success Probe Comparison
+
+| Checkpoint | 1.5B LogReg | 7B LogReg | Δ |
+|------------|-------------|-----------|------|
+| **0%** | 73.0% | **80.0%** | +7.0% |
+| **50%** | 73.0% | 72.5% | -0.5% |
+| **100%** | 81.0% | **90.0%** | +9.0% |
+
+| Checkpoint | 1.5B DiffMeans | 7B DiffMeans | Δ |
+|------------|----------------|--------------|------|
+| **0%** | 72.0% | **80.0%** | +8.0% |
+| **50%** | 69.0% | **75.0%** | +6.0% |
+| **100%** | 72.0% | **85.0%** | +13.0% |
+
+### Other Probes Comparison
+
+| Probe Type | 1.5B | 7B | Winner |
+|------------|------|-----|--------|
+| Topic (0%) | **86.0%** | 82.5% | 1.5B |
+| Difficulty Class | 46.0% | **47.5%** | ~Tie |
+| Difficulty R² | **0.209** | 0.018 | 1.5B |
+
+### Key Observations
+
+1. **7B has stronger metacognition**: 
+   - +7% at 0% (before answering)
+   - +9% at 100% (after answering)
+   - The 7B model "knows itself" better
+
+2. **Both models struggle at 50%**:
+   - Mid-generation is noisiest for both models
+   - Signal is clearer at endpoints (0% and 100%)
+
+3. **Topic probes similar**: Both >80%, expected since vocabulary is distinctive
+
+4. **Difficulty probes weak in both**: Neither model encodes human difficulty well
+
+### Interpretation
+
+**Larger models have better calibrated "metacognition"**. The 7B model achieves 90% success prediction at 100% checkpoint - near-ceiling performance. This suggests:
+
+- The success/failure signal is **stronger in larger models**
+- Larger models may have more structured internal representations
+- The "knows when it will fail" capability scales with model size
+
+This is a significant finding for **early stopping** and **uncertainty estimation** - larger models could more reliably predict their own failures.
+
+---
+
 ## Key Insights
 
-### 1. Success Prediction Works
-- 73% at 0% checkpoint = model "knows" before answering
-- 81% at 100% = strong post-hoc signal
-- Layer 16-18 is the "metacognition" zone
+### 1. Success Prediction Works (and Scales!)
+- 1.5B: 73% at 0%, 81% at 100%
+- 7B: **80% at 0%, 90% at 100%**
+- Larger models have better "metacognition"
+- Layer 16-18 is the "metacognition" zone in both models
 
 ### 2. Linear Probes Are Sufficient
 - MLP probes perform within ±2% of linear probes
@@ -240,17 +293,30 @@ Performance degrades significantly at Level 5 across all topics, with precalculu
 
 ## File Outputs
 
-### Probe Results
+### Probe Results (1.5B - 500 samples)
 ```
 probe_results_1.5b_500_fixed/
 ├── success_probe_accuracy.png
 ├── success_probe_heatmap_2d.png
-├── mlp_vs_linear.png          # NEW: MLP comparison
+├── mlp_vs_linear.png          # MLP comparison
 ├── control_task_shuffled.png
 ├── topic_probe_accuracy.png
 ├── difficulty_probe_classification.png
 ├── difficulty_probe_regression.png
 ├── pooling_comparison.png
+├── pca_layer20_*.png
+└── summary.json
+```
+
+### Probe Results (7B - 200 samples)
+```
+probe_results_7b/
+├── success_probe_accuracy.png
+├── success_probe_heatmap_2d.png
+├── control_task_shuffled.png
+├── topic_probe_accuracy.png
+├── difficulty_probe_classification.png
+├── difficulty_probe_regression.png
 ├── pca_layer20_*.png
 └── summary.json
 ```
@@ -288,8 +354,12 @@ eval_results_1.5b/
 ## Commands Reference
 
 ```bash
-# Data collection
+# Data collection (1.5B)
 python src/collect_probe_data.py --num_samples 500 --balance --pooling both
+
+# Data collection (7B)
+python src/collect_probe_data.py --model Qwen/Qwen2.5-Math-7B-Instruct \
+    --num_samples 200 --balance --pooling last_token --output probe_data_7b.pt
 
 # Probe training (linear)
 python src/train_probe.py --data_file probe_data.pt --output_dir probe_results
