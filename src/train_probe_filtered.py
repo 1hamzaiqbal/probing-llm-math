@@ -33,6 +33,15 @@ def load_and_filter_data(data_file, audit_file, max_tokens=1000):
         if len(data) > 0:
             print(f"First item keys: {list(data[0].keys()) if isinstance(data[0], dict) else 'not a dict'}")
     
+    # Handle nested format: {'data': [...], 'metadata': {...}}
+    if isinstance(data, dict) and 'data' in data and 'metadata' in data:
+        print("Detected nested format with 'data' and 'metadata' keys")
+        actual_data = data['data']  # This is likely a list of dicts
+        metadata = data['metadata']
+        print(f"Metadata: {metadata}")
+        print(f"Inner data type: {type(actual_data)}, length: {len(actual_data) if hasattr(actual_data, '__len__') else 'N/A'}")
+        data = actual_data  # Use the inner data
+    
     # Load audit file for token counts
     token_counts = None
     if audit_file and os.path.exists(audit_file):
