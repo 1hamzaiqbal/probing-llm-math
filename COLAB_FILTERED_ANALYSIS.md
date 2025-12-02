@@ -20,24 +20,51 @@ drive.mount('/content/drive')
 
 ---
 
-## Cell 2: Check Data Files
+## Cell 2: Check Data Files (IMPORTANT - Find Your Files!)
 
 ```python
 import os
 
-# Your files are in My Drive root
 drive_root = "/content/drive/MyDrive"
 
-print("Drive root files (.pt and .csv):")
-for f in os.listdir(drive_root):
-    if f.endswith('.pt') or f.endswith('.csv'):
-        print(f"  {f}")
+print("="*60)
+print("SCANNING FOR YOUR DATA FILES")
+print("="*60)
 
-print("\nprobe_results folder:")
+# Check root Drive folder
+print("\n📁 Drive root (.pt and .csv files):")
+for f in sorted(os.listdir(drive_root)):
+    if f.endswith('.pt') or f.endswith('.csv'):
+        full_path = f"{drive_root}/{f}"
+        size = os.path.getsize(full_path) / (1024*1024)  # MB
+        print(f"  {f} ({size:.1f} MB)")
+
+# Check probe_results subfolder
 probe_results = f"{drive_root}/probe_results"
 if os.path.exists(probe_results):
-    for f in os.listdir(probe_results):
-        print(f"  {f}")
+    print(f"\n📁 probe_results folder:")
+    for f in sorted(os.listdir(probe_results)):
+        if f.endswith('.pt') or f.endswith('.csv'):
+            full_path = f"{probe_results}/{f}"
+            size = os.path.getsize(full_path) / (1024*1024)
+            print(f"  {f} ({size:.1f} MB)")
+
+# Look for the specific files we need
+print("\n" + "="*60)
+print("CHECKING EXPECTED FILES")
+print("="*60)
+
+expected_files = [
+    f"{drive_root}/probe_data_1.5b_500_fixed.pt",
+    f"{drive_root}/probe_audit_500.csv",
+    f"{drive_root}/probe_audit_7b_200.csv",
+    f"{probe_results}/probe_data_1.5b_500_fixed.pt",
+    f"{probe_results}/probe_data_7b_200.pt",
+]
+
+for path in expected_files:
+    exists = "✓" if os.path.exists(path) else "✗"
+    print(f"  {exists} {path}")
 ```
 
 ---
@@ -133,12 +160,22 @@ plt.show()
 ## Cell 5: Run Filtered Training (1.5B)
 
 ```python
-# Train success probes with <1000 token filter
-# Using Drive paths for your data files
+# ⚠️ UPDATE THESE PATHS based on Cell 2 output!
+# The data file should be ~large (hundreds of MB)
+# The audit file should match (same number of rows as samples)
 
+DATA_FILE_1_5B = "/content/drive/MyDrive/probe_data_1.5b_500_fixed.pt"  # UPDATE IF NEEDED
+AUDIT_FILE_1_5B = "/content/drive/MyDrive/probe_audit_500_fixed.csv"    # From Cell 3
+
+# Verify files exist before running
+import os
+print(f"Data file exists: {os.path.exists(DATA_FILE_1_5B)}")
+print(f"Audit file exists: {os.path.exists(AUDIT_FILE_1_5B)}")
+
+# Run filtered training
 !python probing-llm-math/src/train_probe_filtered.py \
-    --data_file /content/drive/MyDrive/probe_results/probe_data_1.5b_500_fixed.pt \
-    --audit_file /content/drive/MyDrive/probe_audit_500_fixed.csv \
+    --data_file "{DATA_FILE_1_5B}" \
+    --audit_file "{AUDIT_FILE_1_5B}" \
     --output_dir probe_results_1.5b_filtered \
     --max_tokens 1000 \
     --test_size 0.2 \
@@ -150,12 +187,20 @@ plt.show()
 ## Cell 6: Run Filtered Training (7B)
 
 ```python
-# Train success probes with <1000 token filter for 7B
-# Using your probe_audit_7b_200.csv from Drive
+# ⚠️ UPDATE THESE PATHS based on Cell 2 output!
 
+DATA_FILE_7B = "/content/drive/MyDrive/probe_data_7b_200.pt"      # UPDATE IF NEEDED  
+AUDIT_FILE_7B = "/content/drive/MyDrive/probe_audit_7b_200.csv"   # From Drive root
+
+# Verify files exist before running
+import os
+print(f"Data file exists: {os.path.exists(DATA_FILE_7B)}")
+print(f"Audit file exists: {os.path.exists(AUDIT_FILE_7B)}")
+
+# Run filtered training
 !python probing-llm-math/src/train_probe_filtered.py \
-    --data_file /content/drive/MyDrive/probe_results/probe_data_7b_200.pt \
-    --audit_file /content/drive/MyDrive/probe_audit_7b_200.csv \
+    --data_file "{DATA_FILE_7B}" \
+    --audit_file "{AUDIT_FILE_7B}" \
     --output_dir probe_results_7b_filtered \
     --max_tokens 1000 \
     --test_size 0.2 \
