@@ -4,9 +4,13 @@ Run these cells in Colab to train probes **without** the 1000+ token samples.
 
 ---
 
-## Cell 1: Setup & Pull Latest Code
+## Cell 1: Setup & Mount Drive
 
 ```python
+# Mount Google Drive first
+from google.colab import drive
+drive.mount('/content/drive')
+
 # Pull latest code with filtered training script
 !cd probing-llm-math && git pull
 
@@ -16,36 +20,79 @@ Run these cells in Colab to train probes **without** the 1000+ token samples.
 
 ---
 
-## Cell 2: Check Current Data Files
+## Cell 2: Check Data Files
 
 ```python
 import os
 
-# Check what data files exist
-print("Current directory files:")
-for f in os.listdir('.'):
+# Your files are in My Drive root
+drive_root = "/content/drive/MyDrive"
+
+print("Drive root files (.pt and .csv):")
+for f in os.listdir(drive_root):
     if f.endswith('.pt') or f.endswith('.csv'):
         print(f"  {f}")
 
-print("\nDrive files (if mounted):")
-drive_path = "/content/drive/MyDrive/probe_results"
-if os.path.exists(drive_path):
-    for f in os.listdir(drive_path):
+print("\nprobe_results folder:")
+probe_results = f"{drive_root}/probe_results"
+if os.path.exists(probe_results):
+    for f in os.listdir(probe_results):
         print(f"  {f}")
 ```
 
 ---
 
-## Cell 3: Analyze Token Distribution BEFORE Filtering
+## Cell 3: Re-evaluate 1.5B Audit File (Fix False Negatives)
+
+```python
+import pandas as pd
+import importlib
+
+# Reload evaluator with latest fixes
+import src.evaluator
+importlib.reload(src.evaluator)
+from src.evaluator import is_equivalent
+
+# Load the 1.5B audit file from Drive
+audit_file_1_5b = "/content/drive/MyDrive/probe_audit_500.csv"
+df = pd.read_csv(audit_file_1_5b)
+
+print(f"Loaded {len(df)} samples from {audit_file_1_5b}")
+print(f"Original: {df['is_correct'].sum()} correct, {(~df['is_correct']).sum()} incorrect")
+
+# Re-evaluate all samples
+changes = []
+for idx, row in df.iterrows():
+    gt = str(row['ground_truth'])
+    pred = str(row['clean_prediction'])
+    new_result = is_equivalent(pred, gt)
+    
+    if new_result != row['is_correct']:
+        changes.append((idx, gt, pred, new_result))
+        df.at[idx, 'is_correct'] = new_result
+
+print(f"\nRe-evaluated: {len(changes)} changes")
+for idx, gt, pred, result in changes[:10]:
+    print(f"  Row {idx}: '{gt}' vs '{pred}' -> {'✓' if result else '✗'}")
+
+print(f"\nAfter fix: {df['is_correct'].sum()} correct, {(~df['is_correct']).sum()} incorrect")
+
+# Save fixed version
+fixed_audit_1_5b = "/content/drive/MyDrive/probe_audit_500_fixed.csv"
+df.to_csv(fixed_audit_1_5b, index=False)
+print(f"\nSaved fixed audit to: {fixed_audit_1_5b}")
+```
+
+---
+
+## Cell 4: Analyze Token Distribution BEFORE Filtering
 
 ```python
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Load the 1.5B audit file
-audit_file = "probe_audit.csv"  # Adjust path if needed
-# audit_file = "/content/drive/MyDrive/probe_results/probe_audit_1.5b_500.csv"
-
+# Use the FIXED 1.5B audit file
+audit_file = "/content/drive/MyDrive/probe_audit_500_fixed.csv"
 df = pd.read_csv(audit_file)
 
 print(f"Total samples: {len(df)}")
@@ -83,15 +130,15 @@ plt.show()
 
 ---
 
-## Cell 4: Run Filtered Training (1.5B)
+## Cell 5: Run Filtered Training (1.5B)
 
 ```python
 # Train success probes with <1000 token filter
-# Make sure you have the right paths for your data files
+# Using Drive paths for your data files
 
 !python probing-llm-math/src/train_probe_filtered.py \
-    --data_file probe_data_1.5b_500_fixed.pt \
-    --audit_file probe_audit.csv \
+    --data_file /content/drive/MyDrive/probe_results/probe_data_1.5b_500_fixed.pt \
+    --audit_file /content/drive/MyDrive/probe_audit_500_fixed.csv \
     --output_dir probe_results_1.5b_filtered \
     --max_tokens 1000 \
     --test_size 0.2 \
@@ -100,34 +147,24 @@ plt.show()
 
 ---
 
-## Cell 5: Run Filtered Training (7B)
+## Cell 6: Run Filtered Training (7B)
 
 ```python
-# For 7B, we need to find the audit file
-# If you saved it separately, use that path
-# Otherwise, you may need to regenerate with token counts
+# Train success probes with <1000 token filter for 7B
+# Using your probe_audit_7b_200.csv from Drive
 
-# Option A: If you have a 7B audit file
 !python probing-llm-math/src/train_probe_filtered.py \
-    --data_file probe_data_7b_200.pt \
-    --audit_file probe_audit_7b.csv \
+    --data_file /content/drive/MyDrive/probe_results/probe_data_7b_200.pt \
+    --audit_file /content/drive/MyDrive/probe_audit_7b_200.csv \
     --output_dir probe_results_7b_filtered \
     --max_tokens 1000 \
     --test_size 0.2 \
     --seed 42
-
-# Option B: If no audit file (will use all samples)
-# !python probing-llm-math/src/train_probe_filtered.py \
-#     --data_file probe_data_7b_200.pt \
-#     --output_dir probe_results_7b_filtered \
-#     --max_tokens 1000 \
-#     --test_size 0.2 \
-#     --seed 42
 ```
 
 ---
 
-## Cell 6: Display Filtered Results
+## Cell 7: Display Filtered Results
 
 ```python
 from IPython.display import Image, display
@@ -189,18 +226,23 @@ else:
 
 ---
 
-## Cell 7: Compare Filtered vs Unfiltered
+## Cell 8: Compare Filtered vs Unfiltered
 
 ```python
 import json
+import os
 
 print("="*60)
 print("COMPARISON: FILTERED vs UNFILTERED")
 print("="*60)
 
-# Load unfiltered summary (adjust path)
-unfiltered_1_5b = "probe_results_1.5b_500_fixed/summary.json"
+# Load unfiltered summary from Drive
+unfiltered_1_5b = "/content/drive/MyDrive/probe_results/probe_results_1.5b_500_fixed/summary.json"
 filtered_1_5b = "probe_results_1.5b_filtered/summary_filtered.json"
+
+# Try alternate path if first doesn't exist
+if not os.path.exists(unfiltered_1_5b):
+    unfiltered_1_5b = "/content/drive/MyDrive/probe_results_1.5b_500_fixed/summary.json"
 
 if os.path.exists(unfiltered_1_5b) and os.path.exists(filtered_1_5b):
     with open(unfiltered_1_5b) as f:
@@ -220,10 +262,17 @@ if os.path.exists(unfiltered_1_5b) and os.path.exists(filtered_1_5b):
             filt_val = filt[filt_key]
             diff = filt_val - unf_val
             print(f"  {cp}: {unf_val:.3f} -> {filt_val:.3f} ({diff:+.3f})")
+else:
+    print(f"1.5B: Could not find both summary files")
+    print(f"  Unfiltered exists: {os.path.exists(unfiltered_1_5b)}")
+    print(f"  Filtered exists: {os.path.exists(filtered_1_5b)}")
 
 # 7B comparison
-unfiltered_7b = "probe_results_7b/summary.json"
+unfiltered_7b = "/content/drive/MyDrive/probe_results/probe_results_7b/summary.json"
 filtered_7b = "probe_results_7b_filtered/summary_filtered.json"
+
+if not os.path.exists(unfiltered_7b):
+    unfiltered_7b = "/content/drive/MyDrive/probe_results_7b/summary.json"
 
 if os.path.exists(unfiltered_7b) and os.path.exists(filtered_7b):
     with open(unfiltered_7b) as f:
@@ -242,20 +291,17 @@ if os.path.exists(unfiltered_7b) and os.path.exists(filtered_7b):
             filt_val = filt[filt_key]
             diff = filt_val - unf_val
             print(f"  {cp}: {unf_val:.3f} -> {filt_val:.3f} ({diff:+.3f})")
+else:
+    print(f"\n7B: Could not find both summary files")
 ```
 
 ---
 
-## Cell 8: Save to Google Drive
+## Cell 9: Save to Google Drive
 
 ```python
-from google.colab import drive
 import shutil
 import os
-
-# Mount drive if not already
-if not os.path.exists('/content/drive'):
-    drive.mount('/content/drive')
 
 # Save filtered results
 output_dir = "/content/drive/MyDrive/probe_results_filtered"
