@@ -70,6 +70,19 @@ The model has **"metacognition"** - it encodes success/failure signal before gen
 - Mean accuracy: **50.3%** (expected ~50%)
 - ✅ **Passed** - confirms probes learn real patterns, not memorizing
 
+### Token Length Filtering Validation ✅
+
+To test if probes were confounded by token length (since long responses are ~98% wrong), we retrained after filtering out 1000+ token samples:
+
+| Model | Checkpoint | Unfiltered | Filtered (n<1000) | Δ |
+|-------|------------|------------|-------------------|-----|
+| 1.5B | 0% | 69.0% | **74.7%** | +5.7% |
+| 1.5B | 100% | 77.0% | **77.1%** | +0.1% |
+| 7B | 0% | 80.0% | **82.8%** | +2.8% |
+| 7B | 100% | 90.0% | **89.7%** | -0.3% |
+
+**Conclusion**: Probe accuracy is **not confounded by token length**. The signal is robust.
+
 ---
 
 ## 2. Token Length Analysis (New Finding!)
@@ -270,6 +283,11 @@ This is a significant finding for **early stopping** and **uncertainty estimatio
 - Success signal is **linearly encoded** in hidden states
 - Supports the "linear representation hypothesis"
 - Simpler model = cleaner interpretation
+
+### 2b. Signal is NOT Token Length Confounded ✅
+- Filtered out 1000+ token samples (the most wrong)
+- Accuracy at 0% and 100% **maintained or improved**
+- Probe detects genuine metacognitive signal, not just "long = wrong"
 
 ### 3. Token Length is Highly Predictive
 - **Correlation -0.49** with correctness
